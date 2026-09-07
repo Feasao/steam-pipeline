@@ -1,0 +1,10 @@
+#init
+venv/
+.env
+*.json
+data/
+target/
+dbt_packages/
+logs/
+*.duckdb*
+test.py
