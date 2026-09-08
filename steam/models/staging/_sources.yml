@@ -1,0 +1,16 @@
+version: 2
+
+sources:
+  - name: steam_raw
+    description: Raw Steam API responses
+    schema: steam_raw
+    tables:
+      - name: raw_prices
+        description: One row per app per collection run. Response_json holds the appdetails.
+        columns:
+          - name: appid
+            tests: [not_null]
+          - name: collected_at
+            tests: [not_null]
+      - name: raw_charts
+        description: One row per collection run. Response_json holds the top-100 concurrents ranking.

@@ -1,0 +1,7 @@
+snapshots:
+  - name: snap_prices
+    relation: ref('stg_prices_current')
+    config:
+      unique_key: appid
+      strategy: check
+      check_cols: [current_price, list_price, discount_percent, price_status]
