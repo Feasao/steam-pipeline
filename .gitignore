@@ -8,3 +8,4 @@ dbt_packages/
 logs/
 *.duckdb*
 test.py
+notes.md
