@@ -1,35 +1,36 @@
 # Steam Price Observatory
 
-A daily ELT pipeline that builds price and player count history for about 430 Steam
+A daily ELT pipeline that builds price and player count history for 784 Steam
 titles from an API that only returns present prices.
 
 Steam's Web API tells you what a game costs currently. It has no endpoint for
-price history, and the public bulk datasets are snapshots. This
-project collects daily observations and models them as slowly-changing dimensions,
+price history and the public bulk datasets are snapshots. This
+project collects daily observations and models them as slowly changing dimensions,
 producing a dataset that cannot be obtained any other way.
 
-**Stack:** Python · BigQuery · dbt Core · S3 · Airflow · GitHub Actions
+**Stack:** Python · BigQuery · dbt Core · S3
+
+<!-- · Airflow · GitHub Actions -->
 
 ## Architecture
 
 <!-- todo: diagram once I add S3 -->
 
-| Layer             | What it does                                        |
-| ----------------- | --------------------------------------------------- |
-| `collection.py`   | Polls Steam for the working set, writes raw JSONL   |
-| `loadbq.py`       | Loads JSONL into BigQuery, full-reload (idempotent) |
-| `models/staging/` | Parses JSON, casts types, derives `price_status`    |
-| `snapshots/`      | SCD Type 2 history of price changes                 |
-| `models/marts/`   | Analytics-ready tables                              |
+| Layer             | What it does                                         |
+| ----------------- | ---------------------------------------------------- |
+| `collection.py`   | Polls Steam for the working set and writes raw JSONL |
+| `loadbq.py`       | Loads JSONL into BigQuery, full-reload (idempotent)  |
+| `models/staging/` | Parses JSON, casts types, derives `price_status`     |
+| `snapshots/`      | SCD Type 2 history of price changes                  |
+| `models/marts/`   | Analytics-ready tables                               |
 
 ## Data sources
 
 | Source                     | Role                  | Notes                            |
 | -------------------------- | --------------------- | -------------------------------- |
-| Steam `appdetails`         | Daily price snapshots | Public API                       |
-| Steam `GetMostPlayedGames` | Daily concurrents     | Top 100 only                     |
+| Steam `appdetails`         | Daily price snapshots | Public API to fetch app details  |
+| Steam `GetMostPlayedGames` | Daily concurrents     | Top 100 results                  |
 | Steam Dataset 2025         | Historical backfill   | 239,664 apps - 1,048,148 reviews |
-
 
 <!-- ### Working set selection -->
 
@@ -42,14 +43,11 @@ design.
 
 ### The historical dataset covers 56% of Steam's catalogue
 
-Steam's app list contains far more than games, like DLC, demos, soundtracks, videos
+Steam's app list contains far more than games like DLC, demos, soundtracks, videos
 and playtests that all have IDs. The upstream collection called `appdetails` on every
-one of them, and about 44% returned nothing, mostly because the content was
-delisted or region-restricted.
-
-Delisted titles tend to be older ones, which means release 
-counts by year undercount the past and any pricing trend only reflects games that survived,
-so there is caution to be had against historical count analysis.
+one of them and about 44% returned nothing, mostly because the content was
+delisted or region-restricted. Delisted titles tend to be older ones, which means release
+counts by year have a recency bias.
 
 ### Steam prices are not currency-convertible
 
@@ -61,33 +59,30 @@ with `cc=us` pinned, so both sources share one currency.
 
 ### Review volume spikes 9x in 2025
 
-Reviews average ~5,750/month in 2024 and ~54,000/month in 2025. The upstream collector used the review endpoint's default
-most-recent-first ordering with a per-app cap, so recent reviews are heavily
-over-sampled. **Consequence:** no marts that calculate review volume over time have merit from
-this source. The `steam_purchase` flag is also constant `true` across all
-1,048,148 rows, all reviews come from verified purchases only.
+Reviews average ~5,750/month in 2024 and ~54,000/month in 2025. The collector used the review endpoint's default
+most recent first ordering, so recent reviews are heavily over-sampled and **thus** no marts that calculate review volume over time have merit. The `steam_purchase` flag is also constant `true` across all
+1,048,148 rows, which indicates that all reviews come from verified purchases only.
 
 ### The value `price_status`
 
-A null price does not mean one thing. Observed causes:
+A null price does not mean only one thing:
 
-| Status         | Cause                                                            |
-| -------------- | ---------------------------------------------------------------- |
-| `priced`       | Normal paid title                                                |
-| `free`         | `is_free: true`, no price block in the responce                  |
-| `unreleased`   | `coming_soon: true` — not yet purchasable                        |
-| `fetch_failed` | API returned `success: false`                                    |
-| `unpriced`     | Free-to-play without the flag, delisted, non-game listings       |
-
+| Status         | Cause                                                      |
+| -------------- | ---------------------------------------------------------- |
+| `priced`       | Normal paid title                                          |
+| `free`         | `is_free: true`, no price block in the responce            |
+| `unreleased`   | `coming_soon: true` — not yet purchasable                  |
+| `fetch_failed` | API returned `success: false`                              |
+| `unpriced`     | Free-to-play without the flag, delisted, non-game listings |
 
 Failed fetches are **stored as rows** for transparency.
 
 The status `unpriced` is a mixed bucket:  
-Rocket League has moved to Epic and delisted, Shogun 2's appid has been superseded by another, Call of Duty has a button redirect, FiveM is an advertisement.
+Rocket League has moved to Epic and delisted, Shogun 2's appid has been superseded by another, Call of Duty has a button redirect, FiveM is an advertisement, so no prices can be derived from these appid endpoints.
 
 ### Other source defects of the historical source
 
-- `required_age` contains `17+` and `javascript:ToggleCheckbox(...)` alongside integers
+- `required_age` contains `17+` and scrape artifacts alongside integers
 - `votes_funny` maxes at 4,294,967,295 (2<sup>32</sup>−1), an overflow
 - `release_date` includes `1969-12-31` (epoch-zero parse failures), `9998` and `6969`
 - The Hugging Face comparison set encodes missing values as `""` rather than `NULL`,
@@ -102,43 +97,33 @@ that directs users to `IStoreService/GetAppList` that requires a steam API key, 
 has a useful `last_modified` for
 change-data-capture.
 
-
 ## Design decisions
 
-### Full reload, not incremental
+### Full reload and not incremental
 
-The loader `loadbq.py` truncates and rewrites on every run. This is made to be **idempotent** so that any failed
-run is recovered by running it again, with no possibility of duplicates. 
-At ~13,000 rows/month it does not pose a significant load on the implementation. The
-crossover to incremental loading is deliberately deferred until volume justifies it.
+The loader `loadbq.py` truncates and rewrites on every run to be **idempotent**, so that any failed
+run is recovered by running it again with no possibility of duplicates.
+At tens of thousands of rows per month it does not pose a heavy load on the implementation.
 
-### Raw JSON stored whole
+### Raw JSON stored whole and `response_json` is stored as STRING
 
-In `collection.py` the complete API response is stored as a string
-and parsed in dbt. Extraction mistakes are unrecoverable for daily snapshots and
-a field not collected is not reconstructed.
-
-### `response_json` as STRING, not BigQuery's JSON type
-
-The `JSON` type rejects malformed values at load time, which would contradict
-storing failures as data. `JSON_VALUE()` queries strings equally well.
+In `collection.py`, the complete API response is stored as a string
+and parsed in dbt. The native `JSON` BigQuery type rejects malformed values at load time, which would contradict
+storing failures as data and since we can not reconstruct not collected fields, `JSON_VALUE()` is used.
 
 <!-- todo : partitioning + clustering rationale-->
 
----
+## Known limitations and design choices
 
-## Known limitations
-
-- **Collection cadence is irregular.**   
-The collection happens by a local scheduled task that is subject to errors. It will be updated once Workload Identity Federation with Github Actions is set up.
-- **Snapshot timestamps are run-time, not observation-time.**   
-dbt snapshots record
+- **Collection cadence is irregular**  
+  The collection happens by a local scheduled task that is subject to errors. It will be updated once Workload Identity Federation with Github Actions is set up.
+- **Snapshot timestamps are run-time and not observation-time**  
+  Dbt snapshots record
   `dbt_valid_from` as when the snapshot ran, not when the price was collected.
-- **`source` in `config/app_ids.csv` records first match**.   
-Apps in the top-paid list for example are tagged `charts_top100`, by first appear. That means the column cannot be used to answer *"How do top-paid titles behave?"* since some are tagged elsewhere, will change if needed.
-- **Working set is frozen at selection time.**   
-Games discounted after selection do not enter the sample, the tracked games are fixed when the appids to track are chosen.
-
+- **`source` in `config/app_ids.csv` is tagged by first match**  
+  Some apps in the top paid list for example are tagged `charts_top100` because they were first met there. That means the column cannot be used to answer questions _"How do top-paid titles behave?"_ since some are tagged elsewhere.
+- **Apps are frozen at selection time**  
+  The tracked apps are fixed in `app_ids.csv`. More can be added, but the daily records of the new entries will start at selection date thereafter.
 
 <!-- ## Setup
 
@@ -146,8 +131,7 @@ Games discounted after selection do not enter the sample, the tracked games are 
 ## Running
  -->
 
-
 ## Attribution
 
-The historical data from [Steam Dataset 2025](https://doi.org/10.5281/zenodo.17266922) by Donald Fountain.   
+The historical data from [Steam Dataset 2025](https://doi.org/10.5281/zenodo.17266922) by Donald Fountain.  
 Steam data retrieved via the public [Steam Web API](https://steamcommunity.com/dev).
