@@ -5,6 +5,9 @@ call venv\Scripts\activate.bat
 python collection.py
 if errorlevel 1 exit /b 1
 
+python upload_raw.py
+if errorlevel 1 exit /b 1
+
 python loadbq.py
 if errorlevel 1 exit /b 1
 

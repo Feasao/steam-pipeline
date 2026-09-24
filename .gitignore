@@ -9,3 +9,5 @@ logs/
 *.duckdb*
 test.py
 notes.md
+!infra/*.json
+*_pycache_*
