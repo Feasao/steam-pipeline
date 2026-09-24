@@ -17,8 +17,15 @@ def main():
     S = requests.Session()
     S.headers["User-Agent"] = "steam-pipeline/0.1"
 
-    charts = S.get("https://api.steampowered.com/ISteamChartsService/GetMostPlayedGames/v1/",
-                timeout=60).json()
+
+    try:
+        r = S.get("https://api.steampowered.com/ISteamChartsService/GetMostPlayedGames/v1/",
+                  timeout=60)
+        r.raise_for_status()
+        charts = r.json()
+    except Exception as e:
+        print(f"  charts fetch failed, continuing with prices: {e}")
+        charts = {"_error": str(e)}
     with open(f"{OUT}/charts_{run_ts:%Y%m%dT%H%M%S}.json", "w", encoding="utf-8") as f:
         json.dump({"collected_at": run_ts.isoformat(), "response": charts}, f)
 
@@ -38,7 +45,8 @@ def main():
                         time.sleep(wait)
                         continue
                     r.raise_for_status()
-                    body = r.json().get(str(appid), {})
+                    body = ((r.json() or {}).get(str(appid))
+                            or {"success": False, "_error": "not_in_response"})
                     break
                 except Exception as e:
                     if attempt == 2:
