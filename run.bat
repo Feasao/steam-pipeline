@@ -8,7 +8,7 @@ if errorlevel 1 exit /b 1
 python upload_raw.py
 if errorlevel 1 exit /b 1
 
-python loadbq.py
+python s3_to_bq.py
 if errorlevel 1 exit /b 1
 
 cd steam

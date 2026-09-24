@@ -19,7 +19,8 @@ producing a dataset that cannot be obtained any other way.
 | Layer             | What it does                                         |
 | ----------------- | ---------------------------------------------------- |
 | `collection.py`   | Polls Steam for the working set and writes raw JSONL |
-| `loadbq.py`       | Loads JSONL into BigQuery, full-reload (idempotent)  |
+| `s3_tobq.py`      | Loads JSONL into BigQuery, incrementally (idempotent)|
+| `upload_raw.py`   | Synchronises local daily api files to S3             |
 | `models/staging/` | Parses JSON, casts types, derives `price_status`     |
 | `snapshots/`      | SCD Type 2 history of price changes                  |
 | `models/marts/`   | Analytics-ready tables                               |
@@ -99,11 +100,18 @@ change-data-capture.
 
 ## Design decisions
 
-### Full reload and not incremental
+### Incremental load file by file from S3
 
-The loader `loadbq.py` truncates and rewrites on every run to be **idempotent**, so that any failed
-run is recovered by running it again with no possibility of duplicates.
-At tens of thousands of rows per month it does not pose a heavy load on the implementation.
+Raw files are uploaded to S3 before anything is loaded with `s3_to_bq.py`. 
+It uploads only the files that exist in S3 and not in BigQuery.
+A rerun finds nothing new, so the load is **idempotent**.
+Each table is appended in one load job which is applied atomically.
+
+This replaced a full reload from the local folder with (`WRITE_TRUNCATE`). 
+Losing the local data for some reason would have dropped them from BigQuery and they could not be re-fetched,
+now the model is completely independent from local files.
+
+`--full-refresh` rebuilds both tables from S3 for schema changes and raises an exception if BigQuery has files that S3 does not as to not lose data.
 
 ### Raw JSON stored whole and `response_json` is stored as STRING
 

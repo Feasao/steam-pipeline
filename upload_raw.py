@@ -1,3 +1,6 @@
+"""
+Uploader which syncs the collected daily and saved api called titles to S3
+"""
 import argparse
 import pathlib
 import sys

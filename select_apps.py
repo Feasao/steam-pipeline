@@ -1,3 +1,9 @@
+"""
+Selection logic of the tracked games the api calls daily
+Watchlist are a personal taste curation, charts are the 100 most played games at time of call
+and top paid are the top 600 games from the backlog by review count*
+"""
+
 import requests, csv, os
 from datetime import date
 import duckdb

@@ -1,3 +1,6 @@
+"""
+This file is a one time upload of the backlogged steam data to S3
+"""
 import argparse
 import os
 import pathlib
