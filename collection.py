@@ -12,7 +12,7 @@ def main():
 
     with open(APP_LIST, encoding="utf-8") as f:
         app_ids = [int(r["appid"]) for r in csv.DictReader(f)]
-    print(f"{len(app_ids)} apps, ~{len(app_ids) * 1.5 / 60:.0f} min")
+    print(f"{len(app_ids)} apps, ~{len(app_ids) * 2 / 60:.0f} min")
 
     S = requests.Session()
     S.headers["User-Agent"] = "steam-pipeline/0.1"
@@ -45,8 +45,17 @@ def main():
                         time.sleep(wait)
                         continue
                     r.raise_for_status()
-                    body = ((r.json() or {}).get(str(appid))
-                            or {"success": False, "_error": "not_in_response"})
+                    data = r.json()
+                    if not data:
+                        raise ValueError("empty_response")
+                    if str(appid) in data:
+                        body = data[str(appid)]
+                    elif len(data) == 1:
+                        # Since 2026-09-25 Steam changed its responce and does not keep the responce under the appid but another one
+                        key, body = next(iter(data.items()))
+                        body = {**(body or {}), "_response_key": key}
+                    else:
+                        raise ValueError("not_in_response")
                     break
                 except Exception as e:
                     if attempt == 2:
@@ -68,7 +77,7 @@ def main():
 
             if n % 50 == 0:
                 print(f"  {n}/{len(app_ids)}  ok={ok} failed={failed}")
-            time.sleep(1.5)
+            time.sleep(2)
 
     print(f"\nwrote {ok + failed} rows ({ok} ok, {failed} failed) to {path}")
 

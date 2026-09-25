@@ -10,6 +10,7 @@ with changes as (
         lag(discount_percent) over w as prev_discount,
         lag(price_status)     over w as prev_status
     from {{ ref('stg_prices') }}
+    where price_status != 'fetch_failed'
     window w as (partition by appid order by collected_at)
 ),
 
