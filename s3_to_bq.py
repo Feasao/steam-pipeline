@@ -72,6 +72,9 @@ def price_rows(text, fname, loaded_at):
             "source_file": fname,
             "loaded_at": loaded_at,
         })
+    expected = text.count("\n")
+    if len(rows) != expected:
+        raise ValueError(f"{fname}: {expected} records in file, parsed {len(rows)}")
     return rows
 
 

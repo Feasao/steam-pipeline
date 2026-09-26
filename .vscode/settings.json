@@ -1,0 +1,6 @@
+{
+  "files.readonlyInclude": {
+    "data/raw/**": true,
+    "data/mmg/**": true
+  }
+}
