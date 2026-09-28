@@ -1,0 +1,35 @@
+version: 2
+
+models:
+  - name: fct_player_peaks
+    description: >
+      Steam's top 100 peak concurrent players for apps daily one row per app
+    columns:
+      - name: appid
+        tests: [not_null]
+      - name: rollup_date
+        tests: [not_null]
+    tests:
+      - dbt_utils.unique_combination_of_columns:
+          arguments:
+            combination_of_columns: [appid, rollup_date]
+
+  - name: fct_price_history
+    description: SCD2-style price history, one row per app per price version for successful fetches
+    columns:
+      - name: appid
+        tests: [not_null]
+      - name: valid_from
+        tests: [not_null]
+    tests:
+      - dbt_utils.unique_combination_of_columns:
+          arguments:
+            combination_of_columns: [appid, valid_from]
+
+  - name: dim_apps
+    description: frozen working set, 784 apps, 2026-09-09
+    columns:
+      - name: appid
+        tests: [not_null, unique]
+      - name: source
+        tests: [not_null]

@@ -1,0 +1,13 @@
+version: 2
+
+seeds:
+  - name: app_ids
+    description: Frozen set of 784 apps, 2026-09-09
+    config:
+      column_types:
+        appid: int64
+        source: string
+        added_at: date
+    columns:
+      - name: appid
+        tests: [not_null, unique]

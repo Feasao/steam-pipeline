@@ -128,10 +128,10 @@ storing failures as data and since we can not reconstruct not collected fields, 
 - **Snapshot timestamps are run-time and not observation-time**  
   Dbt snapshots record
   `dbt_valid_from` as when the snapshot ran, not when the price was collected.
-- **`source` in `config/app_ids.csv` is tagged by first match**  
+- **`source` in `app_ids.csv` is tagged by first match**  
   Some apps in the top paid list for example are tagged `charts_top100` because they were first met there. That means the column cannot be used to answer questions _"How do top-paid titles behave?"_ since some are tagged elsewhere.
 - **Apps are frozen at selection time**  
-  The tracked apps are fixed in `app_ids.csv`. More can be added, but the daily records of the new entries will start at selection date thereafter.
+  The tracked apps are fixed. More can be added, but the daily records of the new entries will start at selection date thereafter.
 
 <!-- ## Setup
 

@@ -11,22 +11,11 @@ from collections import Counter
 
 MMG_APPLICATIONS = "data/mmg/applications.csv"
 MMG_REVIEWS      = "data/mmg/reviews.csv"
-OUT              = "config/app_ids.csv"
-WATCHLIST        = [2595260,
-1903340,
-1030300,
-1245620,
-1488490,
-1666480,
-383870,
-534380,
-3008130,
-1798230,
-300570,
-2909400,
-526870]
+OUT              = "steam/seeds/app_ids.csv"
+WATCHLIST        = [2595260,1903340,1030300,1245620,1488490,
+1666480,383870,534380,3008130,1798230,300570,2909400,526870]
 
-os.makedirs("config", exist_ok=True)
+os.makedirs("steam/seeds", exist_ok=True)
 today = date.today().isoformat()
 rows = {}  
 existing = {}

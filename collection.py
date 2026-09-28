@@ -1,7 +1,7 @@
 import requests, json, time, os, csv
 from datetime import datetime, timezone
 
-APP_LIST = "config/app_ids.csv"
+APP_LIST = "steam/seeds/app_ids.csv"
 OUT      = "data/raw/steam_prices"
 
 
