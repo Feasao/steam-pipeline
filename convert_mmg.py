@@ -1,3 +1,7 @@
+"""
+This file converts the mmg data from csv to parquet
+"""
+
 import argparse
 import datetime as dt
 import pathlib
