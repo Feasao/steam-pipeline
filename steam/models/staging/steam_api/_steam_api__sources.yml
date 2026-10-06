@@ -6,11 +6,11 @@ sources:
     schema: steam_raw
     tables:
       - name: raw_prices
-        description: One row per app per collection run. Response_json holds the appdetails.
+        description: One row per app. Response_json has the appdetails.
         columns:
           - name: appid
             tests: [not_null]
           - name: collected_at
             tests: [not_null]
       - name: raw_charts
-        description: One row per collection run. Response_json holds the top-100 concurrents ranking.
+        description: Response_json has yesterdays top-100 concurrents ranking.

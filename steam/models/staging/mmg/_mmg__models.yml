@@ -1,0 +1,70 @@
+version: 2
+
+models:
+  - name: stg_mmg_reviews
+    description: >
+      Reviews were collected newest-first with a cap of 100 per app and are biased towards 2025.
+    columns:
+      - name: recommendationid
+        tests: [not_null, unique]
+      - name: appid
+        tests:
+          - not_null
+          - relationships:
+              arguments:
+                to: ref('stg_mmg_applications')
+                field: appid
+      - name: reviewed_at
+        tests: [not_null]
+      - name: voted_up
+        tests: [not_null]
+      - name: votes_up
+        tests:
+          - cast_preserves_values:
+              arguments:
+                source_relation: source('mmg_raw', 'reviews')
+                source_column: votes_up
+      - name: weighted_vote_score
+        tests:
+          - cast_preserves_values:
+              arguments:
+                source_relation: source('mmg_raw', 'reviews')
+                source_column: weighted_vote_score
+
+  - name: stg_mmg_applications
+    description: One row per app with known bad values nulled.
+    columns:
+      - name: appid
+        tests: [not_null, unique]
+      - name: app_name
+        tests: [not_null]
+      - name: list_price
+        tests:
+          - cast_preserves_values:
+              arguments:
+                source_relation: source('mmg_raw', 'applications')
+                source_column: mat_initial_price
+      - name: current_price
+        tests:
+          - cast_preserves_values:
+              arguments:
+                source_relation: source('mmg_raw', 'applications')
+                source_column: mat_final_price
+      - name: discount_percent
+        tests:
+          - cast_preserves_values:
+              arguments:
+                source_relation: source('mmg_raw', 'applications')
+                source_column: mat_discount_percent
+      - name: recommendations_total
+        tests:
+          - cast_preserves_values:
+              arguments:
+                source_relation: source('mmg_raw', 'applications')
+                source_column: recommendations_total
+      - name: metacritic_score
+        tests:
+          - cast_preserves_values:
+              arguments:
+                source_relation: source('mmg_raw', 'applications')
+                source_column: metacritic_score

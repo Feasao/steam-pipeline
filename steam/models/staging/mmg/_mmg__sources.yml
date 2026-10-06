@@ -1,0 +1,20 @@
+version: 2
+
+sources:
+  - name: mmg_raw
+    description: >
+      Steam Dataset 2025.
+    schema: mmg_raw
+    tables:
+      - name: reviews
+        description: Partitioned by month on timestamp_created, clustered on appid, one row per review.
+        columns:
+          - name: recommendationid
+            tests: [not_null]
+          - name: appid
+            tests: [not_null]
+      - name: applications
+        description: One row per app.
+        columns:
+          - name: appid
+            tests: [not_null]
