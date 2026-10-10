@@ -34,6 +34,14 @@ CHART_SCHEMA = [
     bigquery.SchemaField("loaded_at", "TIMESTAMP", mode="REQUIRED"),
 ]
 
+# change prices to incremental stg_prices the view is getting too expensive
+PRICE_LAYOUT = {
+    "time_partitioning": bigquery.TimePartitioning(
+        type_=bigquery.TimePartitioningType.DAY, field="collected_at"),
+    "clustering_fields": ["appid"],
+}
+CHART_LAYOUT = {}
+
 
 def list_s3(s3, bkt):
     # {file name: S3 key} for every raw file under PREFIX.
@@ -95,7 +103,7 @@ def row_count(client, table_id):
         return 0
 
 
-def sync(client, s3, bkt, s3_files, table_id, prefix, schema, parse, full_refresh, loaded_at):
+def sync(client, s3, bkt, s3_files, table_id, prefix, schema, layout, parse, full_refresh, loaded_at):
     in_s3 = {n for n in s3_files if n.startswith(prefix)}
     in_bq = loaded_files(client, table_id)
 
@@ -123,6 +131,7 @@ def sync(client, s3, bkt, s3_files, table_id, prefix, schema, parse, full_refres
         job_config=bigquery.LoadJobConfig(
             schema=schema,
             write_disposition="WRITE_TRUNCATE" if full_refresh else "WRITE_APPEND",
+            **layout,
         ),
     )
     job.result()
@@ -138,6 +147,8 @@ def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--full-refresh", action="store_true",
                     help="truncate and rebuild both tables from everything in S3")
+    ap.add_argument("--dataset", default=DATASET,
+                    help=f"target dataset (default {DATASET}); must already exist")
     args = ap.parse_args()
 
     load_dotenv()
@@ -149,12 +160,10 @@ def main():
 
     s3_files = list_s3(s3, bkt)
     print(f"{len(s3_files)} files in s3://{bkt}/{PREFIX}")
-
-    sync(client, s3, bkt, s3_files, f"{project}.{DATASET}.raw_prices",
-         "prices_", PRICE_SCHEMA, price_rows, args.full_refresh, loaded_at)
-    sync(client, s3, bkt, s3_files, f"{project}.{DATASET}.raw_charts",
-         "charts_", CHART_SCHEMA, chart_rows, args.full_refresh, loaded_at)
-
+    sync(client, s3, bkt, s3_files, f"{project}.{args.dataset}.raw_prices",
+         "prices_", PRICE_SCHEMA, PRICE_LAYOUT, price_rows, args.full_refresh, loaded_at)
+    sync(client, s3, bkt, s3_files, f"{project}.{args.dataset}.raw_charts",
+         "charts_", CHART_SCHEMA, CHART_LAYOUT, chart_rows, args.full_refresh, loaded_at)
 
 if __name__ == "__main__":
     main()
