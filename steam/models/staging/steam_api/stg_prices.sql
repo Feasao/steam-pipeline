@@ -1,3 +1,11 @@
+{{ config(
+    materialized = 'incremental',
+    incremental_strategy = 'insert_overwrite',
+    partition_by = {'field': 'collected_at', 'data_type': 'timestamp', 'granularity': 'day'},
+    cluster_by = ['appid'],
+    on_schema_change = 'fail'
+) }}
+
 with raw as (
     select
         appid,
@@ -5,7 +13,13 @@ with raw as (
         source_file,
         response_json
     from {{ source('steam_raw', 'raw_prices') }}
-
+    
+    {% if is_incremental() %}
+    where collected_at >= timestamp_sub(
+        timestamp_trunc(_dbt_max_partition, day),
+        interval {{ var('prices_lookback_days', 2) }} day
+    )
+    {% endif %}
 ),
 
 parsed as (

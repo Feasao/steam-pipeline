@@ -1,7 +1,14 @@
 snapshots:
   - name: snap_prices
+    description: >
+      SCD Type 2 snapshot of the current price per app.
+      Poc since the source does not get overwritten.
     relation: ref('stg_prices_current')
     config:
       unique_key: appid
       strategy: check
       check_cols: [current_price, list_price, discount_percent, price_status]
+    columns:
+      - name: appid
+      - name: dbt_valid_from
+        description: dbt run time, not observation time

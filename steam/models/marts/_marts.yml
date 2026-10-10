@@ -15,12 +15,15 @@ models:
             combination_of_columns: [appid, rollup_date]
 
   - name: fct_price_history
-    description: SCD2-style price history, one row per app per price version for successful fetches
+    description: >
+      SCD2-style price history, one row per app per price version for successful fetches. This gets rebuilt from raws each run.
     columns:
       - name: appid
         tests: [not_null]
       - name: valid_from
         tests: [not_null]
+      - name: current_price
+        tests: [not_negative]
     tests:
       - dbt_utils.unique_combination_of_columns:
           arguments:
@@ -45,7 +48,8 @@ models:
 
   - name: fct_reviews_tracked
     description: >
-      Reviews for the 784 tracked titles. Incremental by month like fct_reviews.
+      Reviews for the 784 tracked titles. Incremental by month like fct_reviews. Run --full-refresh if the
+      seed changes
     columns:
       - name: recommendationid
         tests: [not_null, unique]
