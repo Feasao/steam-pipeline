@@ -240,10 +240,12 @@ The same filter improved to **30.84 MB** from **529.31 MB**.
 
 Staging started as views because the parsing logic was still changing and the data was small. As the data grew the expensive models were made incremental.
 
-| Daily build bytes processed | Before (view) | After (incremental) |
+| Daily dbt build | Before (view) | After (incremental) |
 | --- | --- | --- |
-| `stg_prices` and 6 readers | ~3,710 MiB | ~56 MiB |
-| `dbt build` | ~3,790 MiB | ~135 MiB |
+| bytes processed | ~3,700 MiB growing ~110 MB/day | ~150 MiB, flat |
+| bytes billed | ~4,200 MiB | 684 MiB |
+
+That is as close as the save can get with BigQuery's 10 MB minimum per query.
 
 For **`fct_reviews`**, MMG is a static dateset, so new data arrival was **simulated** with
 `reviews_as_of`. The model uses `insert_overwrite` on month partitions and when
@@ -283,7 +285,8 @@ Besides `not_null` / `unique`:
   `appdetails` returns one `price_overview` per app and it switches between the base game,
   other editions and bundles. In the tracked set it showed a discounted edition or bundle
   whenever the base game was not discounted. A switch looks like a price change. All 7 list
-  price changes across the October sale were switches.
+  price changes across the October sale were switches. 38 of 1,283 price versions (3%) in 17 apps,
+  are switches in the data as well.
 
 ## Results
  
@@ -327,7 +330,7 @@ Complete Pack at 80% off.
 
 ## Setup
 
-Requires Python 3, a GCP project with BigQuery (location `EU`), an S3 bucket and dbt Core with the
+Requires Python 3.13, a GCP project with BigQuery (location `EU`), an S3 bucket and dbt Core with the
 BigQuery adapter.
 
 ```powershell
