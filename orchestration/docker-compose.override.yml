@@ -1,0 +1,9 @@
+# mounting the whole repo for local dev
+services:
+  scheduler:
+    volumes:
+      - ../:/usr/local/airflow/pipeline
+      - ${USERPROFILE}/.secrets:/usr/local/airflow/secrets:ro
+    environment:
+      GOOGLE_APPLICATION_CREDENTIALS: /usr/local/airflow/secrets/gcp-airflow-pipeline.json
+      GCP_PROJECT: ${GCP_PROJECT}

@@ -12,3 +12,8 @@ notes.md
 !infra/*.json
 !.vscode/settings.json
 *_pycache_*
+
+# for airflow
+*target_airflow/
+*logs_airflow/
+steam/.user.yml

@@ -1,0 +1,8 @@
+requests==2.34.2
+python-dotenv==1.2.3
+boto3==1.43.90
+google-cloud-bigquery==3.45.0
+duckdb==1.5.5
+pyarrow==25.0.1
+dbt-core==1.12.4
+dbt-bigquery==1.12.0
