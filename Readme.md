@@ -285,7 +285,7 @@ Besides `not_null` / `unique`:
   `appdetails` returns one `price_overview` per app and it switches between the base game,
   other editions and bundles. In the tracked set it showed a discounted edition or bundle
   whenever the base game was not discounted. A switch looks like a price change. All 7 list
-  price changes across the October sale were switches. 38 of 1,283 price versions (3%) in 17 apps,
+  price changes across the October sale were switches. 23 of 1,283 price versions (1.8%) in 11 apps,
   are switches in the data as well.
 
 ## Results
