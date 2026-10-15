@@ -8,22 +8,32 @@ price history and the public bulk datasets are snapshots. This
 project collects daily observations and models them as slowly changing dimensions,
 producing a dataset that cannot be obtained any other way.
 
-**Stack:** Python · BigQuery · dbt Core · S3 · DuckDB · Parquet
+**Stack:** Python · BigQuery · dbt Core · S3 · Airflow · Docker · Oracle Cloud · DuckDB · Parquet
 
-<!-- · Airflow · GitHub Actions -->
+<!-- · GitHub Actions -->
+
+The daily run is orchestrated by Airflow on an Oracle Cloud VM, see [Orchestration](#orchestration).
 
 ## Architecture
 
 ```mermaid
 flowchart LR
-    A[Steam Web API] --> B[collection.py]
-    B --> C[data/raw<br/>local]
-    C --> D[upload_raw.py]
-    D --> E[(S3<br/>raw/steam_api)]
-    E --> F[s3_to_bq.py]
-    F --> G[(BigQuery<br/>steam_raw)]
-    G --> H[dbt build]
-    H --> I[(BigQuery<br/>steam_staging)]
+    A[Steam Web API]
+    E[(S3<br/>raw/steam_api)]
+    G[(BigQuery<br/>steam_raw)]
+    I[(BigQuery<br/>steam_staging)]
+    subgraph AF["Airflow DAG steam_daily in an Oracle VM"]
+        B[collection.py] --> C[data/raw<br/>local]
+        C --> D[upload_raw.py]
+        F[s3_to_bq.py]
+        H[dbt build]
+    end
+    A --> B
+    D --> E
+    E --> F
+    F --> G
+    G --> H
+    H --> I
     M[MMG CSVs] --> N[convert_mmg.py<br/>DuckDB, Parquet]
     N --> O[upload_mmg.py]
     O --> P[(S3<br/>raw/steam_history)]
@@ -44,6 +54,7 @@ flowchart LR
 | `models/marts/`   | Analytics-ready tables                                      |
 | `seeds/app_ids.csv` | The selected tracked appids and how each app was selected |
 | `tests/` | Custom data tests |
+| `orchestration/` | Astro project with the Airflow DAG and the image             |
 
 ## Data sources
 
@@ -252,6 +263,59 @@ For **`fct_reviews`**, MMG is a static dateset, so new data arrival was **simula
 incremental it re-reads from the start of the newest month.
 `review_text` (82% of the bytes) is left out.
 
+## Orchestration
+
+The four steps run as the Airflow DAG `steam_daily` (`orchestration/dags/steam_daily.py`) on an
+Oracle Cloud Linux VM. Airflow 3.3 runs from an Astro Runtime image with
+the Astro CLI, replacing a Windows Task Scheduler job.
+
+```
+collection >> upload_raw >> s3_to_bq >> dbt_build
+```
+
+A failed task stops everything after it upstream fails, the same as `run.bat`. 
+Retries are safe because `upload_raw.py` and `s3_to_bq.py` are idempotent and a rerun
+of `collection.py` only adds another observation for the day, which the models already handle.
+
+### The image and the repo
+
+The image is pinned to `runtime:3.3-9-python-3.13`, the same Python as local development. The
+pipeline scripts and dbt get their own venv inside the image so their pinned
+versions never conflict with Airflow's dependencies. Tasks call that venv's `python` and `dbt` directly.
+
+The repo is bind-mounted into the scheduler container and every task runs from the repo root. 
+`data/raw` is mounted and survives restarts.
+
+### dbt in Airflow
+
+dbt runs with `dbt deps && dbt build`. The build takes approx. 30 seconds and
+`dbt build` already skips everything downstream of a failed test while finishing the unrelated
+models, `dbt retry` reruns only what failed, so something like [Cosmos](https://github.com/astronomer/astronomer-cosmos) for example would not be that useful.
+
+Because the DAG writes dbt artifacts to `target_airflow/` and `logs_airflow/`, while developing locally across Linux and Windows they can corrupt each other's partial-parse cache.
+
+### Credentials
+
+| Cloud | How | Scope |
+| --- | --- | --- |
+| BigQuery | Service account `airflow-pipeline` with a key file| `bigquery.jobUser` on the project, `dataEditor` on `steam_raw` and `steam_staging`, `dataViewer` on `mmg_raw` |
+| S3 | The repo's `.env`, read by `load_dotenv()` | The IAM user's bucket policy (`infra/s3_user_pol.json`) |
+
+`steam/profiles.yml` uses `method: oauth`, so dbt takes the same
+Application Default Credentials as the scripts. The project id comes from the `GCP_PROJECT` environment variable.
+
+Keyless options like Workload Identity Federation are not available to a
+VM outside GCP so a key was needed. Note that Google enforces a secure-by-default policy that blocks key creation so it needs to be overriden for this project to work.
+
+### Oracle's VM
+
+- Oracle's network firewall allows only SSH but remote-ssh through VS Code makes development easier.
+- An appropriate host group needs to be setup with astro to give read access to the key and
+  write access to the repo.
+- The containers restart with Docker after a reboot. A run missed during downtime
+  starts as soon as the scheduler is back.
+- Deployment is a `git pull` on the VM from a read-only clone, no git credentials for security.
+
 ## Tests
 
 Besides `not_null` / `unique`:
@@ -268,8 +332,15 @@ Besides `not_null` / `unique`:
 
 ## Known limitations and design choices
 
-- **Collection runs locally**  
-  The collection happens by a local scheduled task that is subject to errors. It will be updated once Workload Identity Federation with Github Actions and orchestration with Airflow is set up.
+- **One VM**  
+  If the VM is down at 12:00 UTC the run starts when it is back, if it is down for the whole day that
+  day is never collected. S3 and BigQuery hold all the data, so losing the VM loses no history and
+  it can be rebuilt from git. It is also subject to Oracle's terms.
+- **The BigQuery key for the VM is long-lived**  
+  Mitigated by least-privilege roles, a read-only mount into one container and periodic rotation.
+- **`collection` hands files to `upload_raw` through local disk**  
+  Fine with the Local Executor since both run in the same container but with a distributed executor the
+  two steps would have to be merged or the file would have to go to S3 directly.
 - **The snapshot only sees days when dbt runs**  
  `fct_price_history` is built from every days observation, the snapshot has no entry for 2026-10-01 because dbt failed to build that day.
 - **Changing the logic of an incremental model needs `--full-refresh`**  
@@ -331,7 +402,8 @@ Complete Pack at 80% off.
 ## Setup
 
 Requires Python 3.13, a GCP project with BigQuery (location `EU`), an S3 bucket and dbt Core with the
-BigQuery adapter.
+BigQuery adapter. Orchestration additionally needs Docker and the
+[Astro CLI](https://www.astronomer.io/docs/astro/cli/install-cli).
 
 ```powershell
 python -m venv venv; venv\Scripts\activate
@@ -340,12 +412,31 @@ copy .env.example .env
 cd steam; dbt deps
 ```
 
+Two environment variables are needed wherever dbt or Airflow run:
+
+| Variable | Used by | Value |
+| --- | --- | --- |
+| `GCP_PROJECT` | `steam/profiles.yml`, the compose override | The GCP project id |
+| `SECRETS_DIR` | The compose override | Folder holding the service account key `gcp-airflow-pipeline.json` |
+
 ## Running
 
-### Daily Windows Task which runs `run.bat`
+### Airflow (prod on VM, or local)
+
+```bash
+cd orchestration
+astro dev start                     # builds the image and starts Airflow
+docker exec <scheduler container> airflow tasks test steam_daily dbt_build   # run one task without recording it
+```
+
+The DAG is paused on creation. On the VM the UI is reached through an SSH tunnel,
+`ssh -N -L 8081:localhost:8080 <vm>`. Changes to the
+`Dockerfile` or the requirements need `astro dev restart` to rebuild the image.
+
+### Without Airflow
 
 `run.bat` activates the venv and runs the four steps in order, stopping at the first one
-that fails
+that fails:
 
   ```Powershell
     python collection.py      # fetch prices and charts from Steam

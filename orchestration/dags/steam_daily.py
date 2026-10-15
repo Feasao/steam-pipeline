@@ -14,7 +14,7 @@ VENV = "/usr/local/airflow/pipeline_venv/bin"
     start_date=datetime(2026, 10, 1),
     catchup=False, # We can only fetch the days titles and info no catchup
     max_active_runs=1,
-    is_paused_upon_creation=True, #change once full migration happens to aiflow
+    is_paused_upon_creation=True,
     default_args={
         "retries": 2,
         "retry_delay": timedelta(minutes=10),
