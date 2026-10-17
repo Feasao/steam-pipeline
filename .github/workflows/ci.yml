@@ -32,3 +32,35 @@ jobs:
       - name: DAG integrity tests
         working-directory: orchestration
         run: pytest tests/ -v
+  dbt:
+    name: dbt build (CI dataset)
+    if: github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    permissions:
+      contents: read
+      id-token: write          # allows requesting GitHub's signed token for the Google exchange
+    env:
+      GCP_PROJECT: ${{ vars.GCP_PROJECT }}
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: google-github-actions/auth@v3
+        with:
+          workload_identity_provider: ${{ vars.WIF_PROVIDER }}
+          service_account: ${{ vars.CI_SERVICE_ACCOUNT }}
+
+      - uses: actions/setup-python@v7
+        with:
+          python-version: "3.13"
+
+      - name: Install pinned requirements with same versions as prod
+        run: pip install -r requirements.txt
+
+      - name: dbt deps
+        working-directory: steam
+        run: dbt deps
+
+      - name: dbt build into steam_ci
+        working-directory: steam
+        run: dbt build --target ci
