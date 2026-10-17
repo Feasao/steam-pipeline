@@ -1,0 +1,34 @@
+name: CI
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  checks:
+    name: DAG tests and requirements sync
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: Pipeline requirements copy is in sync
+        run: diff requirements.txt orchestration/include/pipeline-requirements.txt
+
+      - uses: actions/setup-python@v7
+        with:
+          python-version: "3.13"
+
+      - name: Install Airflow (same version as the Astro image)
+        run: |
+          pip install "apache-airflow==3.3.2" apache-airflow-providers-standard pytest \
+            --constraint https://raw.githubusercontent.com/apache/airflow/constraints-3.3.2/constraints-3.13.txt
+
+      - name: DAG integrity tests
+        working-directory: orchestration
+        run: pytest tests/ -v
