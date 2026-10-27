@@ -8,7 +8,7 @@ price history and the public bulk datasets are snapshots. This
 project collects daily observations and models them as slowly changing dimensions,
 producing a dataset that cannot be obtained any other way.
 
-**Stack:** Python · BigQuery · dbt Core · S3 · Airflow · Docker · Oracle Cloud · GitHub Actions · DuckDB · Parquet
+**Stack:** Python · BigQuery · dbt Core · S3 · Airflow · Docker · Oracle Cloud · GitHub Actions · DuckDB · Parquet · Databricks
 
 The daily run is orchestrated by Airflow on an Oracle Cloud VM, see [orchestration](#orchestration).
 Every change passes CI before it reaches `main`, and the VM deploys `main` by itself, see [CI/CD](#cicd).
@@ -297,6 +297,7 @@ The DAG writes dbt artifacts to `target_airflow/` and `logs_airflow/`,because wh
 | -------- | -------------------------------------------------- | ------------------------------------------------------------------------------------------------------------- |
 | BigQuery | Service account `airflow-pipeline` with a key file | `bigquery.jobUser` on the project, `dataEditor` on `steam_raw` and `steam_staging`, `dataViewer` on `mmg_raw` |
 | S3       | The repo's `.env`, read by `load_dotenv()`         | The IAM user's bucket policy (`infra/s3_user_pol.json`)                                                       |
+| Databricks | Unity Catalog storage credential that assumes an IAM role with an external ID | `s3:GetObject` on `raw/*`, read-only in Unity Catalog (`infra/databricks_role_policy.json`) |
 
 `steam/profiles.yml` uses `method: oauth`, so dbt takes the same
 Application Default Credentials as the scripts. The project id comes from the `GCP_PROJECT` environment variable.
@@ -359,6 +360,54 @@ journalctl -u steam-deploy.service -n 20 --no-pager
 ```
 
 The service reads `GCP_PROJECT` and `SECRETS_DIR` from `~/.config/steam-pipeline.env`.
+
+## Databricks Edition (in progress)
+
+The same S3 raw zone that feeds BigQuery is also processed on Databricks Free Edition, to rebuild the pipeline on a second platform and compare the two. Each step ends with something that runs and is reconciled
+against the BigQuery version.
+
+```mermaid
+flowchart LR
+    E[(S3<br/>raw/steam_api)]
+    subgraph DB["Databricks, Unity Catalog catalog steam"]
+        V[external volume<br/>bronze.s3_raw]
+        B[(bronze.raw_prices)]
+        S[(silver.prices_one_day)]
+        V --> B --> S
+    end
+    E -->|read-only IAM role| V
+    E --> F[s3_to_bq.py] --> G[(BigQuery<br/>steam_raw)]
+```
+
+### Access to S3
+
+Databricks does not hold an AWS key. Its Unity Catalog role assumes an IAM role
+and the trust policy accepts it only with an external ID unique to the workspace. Unity Catalog also
+requires the role to be able to assume itself. The credential and the
+location are read-only, so Databricks cannot write to the raw zone even if the IAM
+policy allowed it. The raw files are read through the external volume `steam.bronze.s3_raw`.
+
+File events are not set up on purpose. Incremental loading will use
+Auto Loader's directory listing and the runs will be triggered by the existing Airflow DAG.
+
+### From bronze to silver
+
+`databricks/01_bronze_silver_one_day.py` has the starter reconciliation tests.
+
+- **Bronze** `steam.bronze.raw_prices`: `spark.read.json` with an explicit schema so
+  `response_json` stays a string (failed fetches are kept as data) with `_metadata.file_path` as `source_file` and an `_ingested_at` timestamp.
+- **Silver** `steam.silver.prices_one_day`: the logic of `stg_prices` with SQL and PySpark. The two are identical, equal column types and `exceptAll` returns 0 rows in both directions.
+- **Reconciliation** `price_status` counts for the sample collection day match
+  `stg_prices` on BigQuery with fetch_failed 2, free 42, priced 723, unpriced 13, unreleased 4 (784 rows).
+
+### BigQuery vs Databricks
+
+| Step                  | BigQuery (`stg_prices`)                       | Databricks                                                                              |
+| --------------------- | --------------------------------------------- | --------------------------------------------------------------------------------------- |
+| Read a JSON field     | `json_value(response_json, '$.data.name')`    | `response_json:data.name` in SQL, `get_json_object` in PySpark, the same JSONPath       |
+| Prices                | `/ 100.0` gives `FLOAT64`                     | `DECIMAL(10,2)`, so money is exact                                                      |
+| Source file           | `source_file` written by `s3_to_bq.py`        | `_metadata.file_path`, a hidden column of every file read                               |
+
 
 ## Tests
 
@@ -491,6 +540,7 @@ that fails:
   python s3_to_bq.py        # load new S3 files into steam_raw
   cd steam; dbt build       # models, snapshot and tests
 ```
+
 
 ## Attribution
 
