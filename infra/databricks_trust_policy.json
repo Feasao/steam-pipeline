@@ -1,0 +1,20 @@
+{
+    "Version": "2012-10-17",
+    "Statement": [
+        {
+            "Effect": "Allow",
+            "Principal": {
+                "AWS": [
+                    "arn:aws:iam::DATABRICKS_ID:role/unity-catalog-prod-UCMasterRole-ARN",
+                    "arn:aws:iam::ACCOUNT_ID:role/databricks_raw_read"
+                ]
+            },
+            "Action": "sts:AssumeRole",
+            "Condition": {
+                "StringEquals": {
+                    "sts:ExternalId": "EXTERNAL_ID"
+                }
+            }
+        }
+    ]
+}
