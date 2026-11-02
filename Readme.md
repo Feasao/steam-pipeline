@@ -163,9 +163,21 @@ The collector now takes the single entry and records the unexpected key as
 
 ### Player-count rollups
 
-`GetMostPlayedGames` reports the previous UTC day and not the day of collection. On 2026-09-16 Steam
-returned the 2026-09-14 response again with a broken ranking (#1 at 42,617 peak players, where CS2
-normally exceeds 1.2M) and 2026-09-15 was never recorded.
+`GetMostPlayedGames` reports the previous UTC day and not the day of collection. Steam does not
+always publish a new day. About once every two weeks, on four collection days it returned the chart from two days earlier
+again.
+
+| Collection day | Day returned | Day never recorded |
+| -------------- | ------------ | ------------------ |
+| 2026-09-08     | 2026-09-06   | 2026-09-07         |
+| 2026-09-16     | 2026-09-14   | 2026-09-15         |
+| 2026-10-14     | 2026-10-12   | 2026-10-13         |
+| 2026-10-22     | 2026-10-20   | 2026-10-21         |
+
+On 2026-09-16 the repeated chart also had a broken ranking (#1 at 42,617 peak players, where CS2 normally exceeds 1.2M).
+The gaps were found on the Databricks side by comparing each file's `rollup_date` with its
+collection day, generating the full date range with `sequence` and listing the days
+without a chart. BigQuery has the same gaps since both BQ and Databricks share the S3 source.
 
 ## Design decisions
 
@@ -203,12 +215,12 @@ mechanism, since the data does not overwrite itself.
 ### First file wins for player-count days
 
 A rollup day is published once, so `fct_player_peaks` keeps the first file that reported each day.
-Made `rollup_check` to check for duplicate days due to the double day on the 16th and
+Made `rollup_check` to check for duplicate days since Steam regularly repeats an earlier day and
 `100_a_day` checks that every rollup day has exactly 100 rows. Since the double day rectification left 147 rows with some duplicates by mistake, a test was created to account for that.
 
 ### `dt=` means different things in S3
 
-Under `raw/steam_api/`, `dt` is the UTC **observation** date parsed from the run timestamp in the
+In `raw/steam_api/`, `dt` is the UTC **observation** date parsed from the run timestamp in the
 file name, so a catch-up run is uploaded correctly. In `raw/steam_history/`,
 `dt` is the **ingest** date of the download, only for versioning of the dataset.
 
@@ -255,7 +267,7 @@ Staging started as views because the parsing logic was still changing and the da
 
 That is as close as the save can get with BigQuery's 10 MB minimum per query.
 
-For **`fct_reviews`**, MMG is a static dateset, so new data arrival was **simulated** with
+For **`fct_reviews`**, MMG is a static dataset, so new data arrival was **simulated** with
 `reviews_as_of`. The model uses `insert_overwrite` on month partitions and when
 incremental it re-reads from the start of the newest month.
 `review_text` (82% of the bytes) is left out.
@@ -293,11 +305,11 @@ The DAG writes dbt artifacts to `target_airflow/` and `logs_airflow/`,because wh
 
 ### Credentials
 
-| Cloud    | How                                                | Scope                                                                                                         |
-| -------- | -------------------------------------------------- | ------------------------------------------------------------------------------------------------------------- |
-| BigQuery | Service account `airflow-pipeline` with a key file | `bigquery.jobUser` on the project, `dataEditor` on `steam_raw` and `steam_staging`, `dataViewer` on `mmg_raw` |
-| S3       | The repo's `.env`, read by `load_dotenv()`         | The IAM user's bucket policy (`infra/s3_user_pol.json`)                                                       |
-| Databricks | Unity Catalog storage credential that assumes an IAM role with an external ID | `s3:GetObject` on `raw/*`, read-only in Unity Catalog (`infra/databricks_role_policy.json`) |
+| Cloud      | How                                                                           | Scope                                                                                                         |
+| ---------- | ----------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------- |
+| BigQuery   | Service account `airflow-pipeline` with a key file                            | `bigquery.jobUser` on the project, `dataEditor` on `steam_raw` and `steam_staging`, `dataViewer` on `mmg_raw` |
+| S3         | The repo's `.env`, read by `load_dotenv()`                                    | The IAM user's bucket policy (`infra/s3_user_pol.json`)                                                       |
+| Databricks | Unity Catalog storage credential that assumes an IAM role with an external ID | `s3:GetObject` on `raw/*`, read-only in Unity Catalog (`infra/databricks_role_policy.json`)                   |
 
 `steam/profiles.yml` uses `method: oauth`, so dbt takes the same
 Application Default Credentials as the scripts. The project id comes from the `GCP_PROJECT` environment variable.
@@ -402,12 +414,11 @@ Auto Loader's directory listing and the runs will be triggered by the existing A
 
 ### BigQuery vs Databricks
 
-| Step                  | BigQuery (`stg_prices`)                       | Databricks                                                                              |
-| --------------------- | --------------------------------------------- | --------------------------------------------------------------------------------------- |
-| Read a JSON field     | `json_value(response_json, '$.data.name')`    | `response_json:data.name` in SQL, `get_json_object` in PySpark, the same JSONPath       |
-| Prices                | `/ 100.0` gives `FLOAT64`                     | `DECIMAL(10,2)`, so money is exact                                                      |
-| Source file           | `source_file` written by `s3_to_bq.py`        | `_metadata.file_path`, a hidden column of every file read                               |
-
+| Step              | BigQuery (`stg_prices`)                    | Databricks                                                                        |
+| ----------------- | ------------------------------------------ | --------------------------------------------------------------------------------- |
+| Read a JSON field | `json_value(response_json, '$.data.name')` | `response_json:data.name` in SQL, `get_json_object` in PySpark, the same JSONPath |
+| Prices            | `/ 100.0` gives `FLOAT64`                  | `DECIMAL(10,2)`, so money is exact                                                |
+| Source file       | `source_file` written by `s3_to_bq.py`     | `_metadata.file_path`, a hidden column of every file read                         |
 
 ## Tests
 
@@ -540,7 +551,6 @@ that fails:
   python s3_to_bq.py        # load new S3 files into steam_raw
   cd steam; dbt build       # models, snapshot and tests
 ```
-
 
 ## Attribution
 
