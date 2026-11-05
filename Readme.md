@@ -408,7 +408,11 @@ Auto Loader's directory listing and the runs will be triggered by the existing A
 
 - **Bronze** `steam.bronze.raw_prices`: `spark.read.json` with an explicit schema so
   `response_json` stays a string (failed fetches are kept as data) with `_metadata.file_path` as `source_file` and an `_ingested_at` timestamp.
-- **Silver** `steam.silver.prices_one_day`: the logic of `stg_prices` with SQL and PySpark. The two are identical, equal column types and `exceptAll` returns 0 rows in both directions.
+- **Silver (`04a_silver_prices`)** has one row per (appid, collected_at). It is kept
+  up to date with a `MERGE`. A watermark on bronze arrival time checks only the new rows, making it incremental. The match on the key means a duplicate observation will not be inserted twice. Unlike the 2-day lookback on BigQuery,
+  a record that arrives late is picked up whatever its `collected_at` is. `NOT NULL` and `CHECK` constraints
+  reject bad rows on write. Uniqueness and the bronze-to-silver count are checked after the merge.
+  The late and duplicate cases are tested in `04b_s``ilver_prices_tests`.
 - **Reconciliation** `price_status` counts for the sample collection day match
   `stg_prices` on BigQuery with fetch_failed 2, free 42, priced 723, unpriced 13, unreleased 4 (784 rows).
 
