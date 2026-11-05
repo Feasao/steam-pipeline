@@ -373,56 +373,6 @@ journalctl -u steam-deploy.service -n 20 --no-pager
 
 The service reads `GCP_PROJECT` and `SECRETS_DIR` from `~/.config/steam-pipeline.env`.
 
-## Databricks Edition (in progress)
-
-The same S3 raw zone that feeds BigQuery is also processed on Databricks Free Edition, to rebuild the pipeline on a second platform and compare the two. Each step ends with something that runs and is reconciled
-against the BigQuery version.
-
-```mermaid
-flowchart LR
-    E[(S3<br/>raw/steam_api)]
-    subgraph DB["Databricks, Unity Catalog catalog steam"]
-        V[external volume<br/>bronze.s3_raw]
-        B[(bronze.raw_prices)]
-        S[(silver.prices_one_day)]
-        V --> B --> S
-    end
-    E -->|read-only IAM role| V
-    E --> F[s3_to_bq.py] --> G[(BigQuery<br/>steam_raw)]
-```
-
-### Access to S3
-
-Databricks does not hold an AWS key. Its Unity Catalog role assumes an IAM role
-and the trust policy accepts it only with an external ID unique to the workspace. Unity Catalog also
-requires the role to be able to assume itself. The credential and the
-location are read-only, so Databricks cannot write to the raw zone even if the IAM
-policy allowed it. The raw files are read through the external volume `steam.bronze.s3_raw`.
-
-File events are not set up on purpose. Incremental loading will use
-Auto Loader's directory listing and the runs will be triggered by the existing Airflow DAG.
-
-### From bronze to silver
-
-`databricks/01_bronze_silver_one_day.py` has the starter reconciliation tests.
-
-- **Bronze** `steam.bronze.raw_prices`: `spark.read.json` with an explicit schema so
-  `response_json` stays a string (failed fetches are kept as data) with `_metadata.file_path` as `source_file` and an `_ingested_at` timestamp.
-- **Silver (`04a_silver_prices`)** has one row per (appid, collected_at). It is kept
-  up to date with a `MERGE`. A watermark on bronze arrival time checks only the new rows, making it incremental. The match on the key means a duplicate observation will not be inserted twice. Unlike the 2-day lookback on BigQuery,
-  a record that arrives late is picked up whatever its `collected_at` is. `NOT NULL` and `CHECK` constraints
-  reject bad rows on write. Uniqueness and the bronze-to-silver count are checked after the merge.
-  The late and duplicate cases are tested in `04b_s``ilver_prices_tests`.
-- **Reconciliation** `price_status` counts for the sample collection day match
-  `stg_prices` on BigQuery with fetch_failed 2, free 42, priced 723, unpriced 13, unreleased 4 (784 rows).
-
-### BigQuery vs Databricks
-
-| Step              | BigQuery (`stg_prices`)                    | Databricks                                                                        |
-| ----------------- | ------------------------------------------ | --------------------------------------------------------------------------------- |
-| Read a JSON field | `json_value(response_json, '$.data.name')` | `response_json:data.name` in SQL, `get_json_object` in PySpark, the same JSONPath |
-| Prices            | `/ 100.0` gives `FLOAT64`                  | `DECIMAL(10,2)`, so money is exact                                                |
-| Source file       | `source_file` written by `s3_to_bq.py`     | `_metadata.file_path`, a hidden column of every file read                         |
 
 ## Tests
 
@@ -437,6 +387,77 @@ Besides `not_null` / `unique`:
 | `unique_combination_of_columns`        | check grain logic, one row per x             |
 | `100_a_day`                            | 100 chart rows a day                         |
 | `rollup_check`                         | two files reporting the same day differently |
+
+## Databricks Edition (in progress)
+
+The same S3 raw zone that feeds BigQuery is also processed on Databricks Free Edition, to rebuild the pipeline on a second platform and compare the two. Each step ends with something that runs and is reconciled
+against the BigQuery version.
+
+```mermaid
+flowchart LR
+    E[(S3<br/>raw/steam_api<br/>raw/steam_history)]
+    subgraph DB["Databricks, Unity Catalog catalog steam"]
+        V[external volume<br/>bronze.s3_raw]
+        AL[Auto Loader<br/>availableNow + checkpoint]
+        BP[(bronze.raw_prices)]
+        BC[(bronze.raw_charts)]
+        BR[(bronze.mmg_reviews)]
+        PV[silver.v_prices_parsed<br/>view]
+        SP[(silver.prices<br/>MERGE)]
+        SC[(silver.charts<br/>explode)]
+        V --> AL
+        AL --> BP --> PV --> SP
+        AL --> BC --> SC
+        V -->|batch| BR
+    end
+    E -->|read-only IAM role| V
+    E --> F[s3_to_bq.py] --> G[(BigQuery<br/>steam_raw)]
+```
+
+### Access to S3
+
+Databricks does not hold an AWS key. Its Unity Catalog role assumes an IAM role
+and the trust policy accepts it only with an external ID unique to the workspace. Unity Catalog also
+requires the role to be able to assume itself. The credential and the
+location are read-only, so Databricks cannot write to the raw zone even if the IAM
+policy allowed it. The raw files are read through the external volume `steam.bronze.s3_raw`.
+
+File events are not set up on purpose. Incremental loading uses Auto Loader's directory listing,
+and the runs will be triggered by the existing Airflow DAG.
+
+### From bronze to silver
+
+- **Bronze (`02_bronze_incremental`)** `steam.bronze.raw_prices`:  
+  Auto Loader with an explicit schema so `response_json` stays a string (failed fetches are kept as data),
+  `_metadata.file_path` as `source_file`, `obs_date` from the `dt=` folder and an `_ingested_at` timestamp. It runs with
+  `availableNow` and a checkpoint. Each run loads only files it has not seen. The first load
+  (55 files, 52 days, 41,423 rows) equals `steam_raw.raw_prices` on BigQuery. A rerun loads nothing,
+  and the next run picked up only the two new days.  
+  `steam.bronze.mmg_reviews` (1,048,148 rows) is a one-off batch load, since the historical dataset does not change.
+- **Charts (`03_charts`)**:  
+  One row per file in `bronze.raw_charts`. Using `from_json` and `explode` to unnest and drop the failed fetches
+  turns the 100 ranks of each file into rows in `silver.charts`. 58 files and 5,700 rows, equal to
+  `raw_charts` and `stg_charts` on BigQuery.
+- **Silver (`04a_silver_prices`)** has one row per (appid, collected_at). It is kept
+  up to date with a `MERGE`. A watermark on bronze arrival time checks only the new rows, making it incremental. The match on the key means a duplicate observation will not be inserted twice. Unlike the 2-day lookback on BigQuery,
+  a record that arrives late is picked up whatever its `collected_at` is. `NOT NULL` and `CHECK` constraints
+  reject bad rows on write. Uniqueness and the bronze-to-silver count are checked after the merge.
+  The late and duplicate cases are tested in `04b_silver_prices_tests`.
+- **Reconciliation**: `databricks/01_bronze_silver_one_day.py` writes silver once in SQL and once in
+  PySpark and proves they are identical. The `price_status` counts for that day match `stg_prices`
+  on BigQuery (fetch_failed 2, free 42, priced 723, unpriced 13, unreleased 4).
+
+### BigQuery vs Databricks
+
+| Step              | BigQuery (`stg_prices`)                                            | Databricks                                                                        |
+| ----------------- | ------------------------------------------------------------------ | --------------------------------------------------------------------------------- |
+| Read a JSON field | `json_value(response_json, '$.data.name')`                         | `response_json:data.name` in SQL, `get_json_object` in PySpark, the same JSONPath |
+| Prices            | `/ 100.0` gives `FLOAT64`                                          | `DECIMAL(10,2)`, so money is exact                                                |
+| Source file       | `source_file` written by `s3_to_bq.py`                             | `_metadata.file_path`, a hidden column of every file read                         |
+| Incremental load  | `s3_to_bq.py` compares the S3 file list with the files in BigQuery | Auto Loader records processed files in a checkpoint                               |
+| Incremental model | `insert_overwrite` with a 2-day lookback on `collected_at`         | `MERGE` on the key, watermark on arrival time, so late records are picked up      |
+| Arrays            | `UNNEST(json_query_array(...))`                                    | `from_json` + `explode`                                                           |
+| Data quality      | dbt tests after the build                                          | `NOT NULL` / `CHECK` constraints on write, plus checks after the merge            |
 
 ## Known limitations and design choices
 
