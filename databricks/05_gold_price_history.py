@@ -89,14 +89,21 @@ print(f"No duplicate keys, no bad ranges, one current version per app, always-fr
 
 # COMMAND ----------
 
-# Differences from last and second to last versions
-prev = spark.sql("DESCRIBE HISTORY steam.gold.fct_price_history LIMIT 2").collect()[-1]["version"]
-changed = spark.sql(f"""
-    SELECT * FROM steam.gold.fct_price_history
-    EXCEPT
-    SELECT * FROM steam.gold.fct_price_history VERSION AS OF {prev}
-""").count()
-print(f"{changed} rows changed since version {prev} ({changed // 2} apps, if every change closed one version and opened one)")
+# Differences between the last two rebuilds
+writes = (spark.sql("DESCRIBE HISTORY steam.gold.fct_price_history")
+          .filter("operation LIKE 'CREATE OR REPLACE TABLE%'")
+          .orderBy("version", ascending=False)
+          .limit(2).collect())
+if len(writes) < 2:
+    print("Only one rebuild so far, nothing to compare")
+else:
+    prev = writes[1]["version"]
+    changed = spark.sql(f"""
+        SELECT * FROM steam.gold.fct_price_history
+        EXCEPT
+        SELECT * FROM steam.gold.fct_price_history VERSION AS OF {prev}
+    """).count()
+    print(f"{changed} rows changed since rebuild {prev} ({changed // 2} apps, if every change closed one version and opened one)")
 
 # COMMAND ----------
 
@@ -116,7 +123,7 @@ print(f"{changed} rows changed since version {prev} ({changed // 2} apps, if eve
 # MAGIC %md
 # MAGIC ### Results
 # MAGIC **Gold fct_price_history**  
-# MAGIC 2,514 versions for 792 apps from 46,371 successful observations in silver.  
+# MAGIC Reconciled with `fct_price_history` on BigQuery, same results, 2,514 versions for 792 apps from 46,371 successful observations in silver, as of 7 Nov.  
 # MAGIC Every app has exactly one current version.
 # MAGIC
 # MAGIC **Quality checks:** No duplicate keys, no version with valid_to <= valid_from,
@@ -127,6 +134,4 @@ print(f"{changed} rows changed since version {prev} ({changed // 2} apps, if eve
 # MAGIC 518790, theHunter: Call of the Wild,  has the `is_free` flag true because it is free for theHunter Classic owners,
 # MAGIC but it has a regular price and discounts for everyone else. Silver labels it `free` while current_price changes.
 # MAGIC It was found by the check that always-free apps have one version, so now that check also excludes apps with a price.
-# MAGIC
-# MAGIC The order of silver's CASE (is_free before price) matches stg_prices on BigQuery, so it is kept for reconciliation.
 # MAGIC
