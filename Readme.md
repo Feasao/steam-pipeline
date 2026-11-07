@@ -373,7 +373,6 @@ journalctl -u steam-deploy.service -n 20 --no-pager
 
 The service reads `GCP_PROJECT` and `SECRETS_DIR` from `~/.config/steam-pipeline.env`.
 
-
 ## Tests
 
 Besides `not_null` / `unique`:
@@ -405,6 +404,8 @@ flowchart LR
         PV[silver.v_prices_parsed<br/>view]
         SP[(silver.prices<br/>MERGE)]
         SC[(silver.charts<br/>explode)]
+        GP[(gold.fct_price_history<br/>SCD2)]
+        SP --> GP
         V --> AL
         AL --> BP --> PV --> SP
         AL --> BC --> SC
@@ -438,26 +439,37 @@ and the runs will be triggered by the existing Airflow DAG.
   One row per file in `bronze.raw_charts`. Using `from_json` and `explode` to unnest and drop the failed fetches
   turns the 100 ranks of each file into rows in `silver.charts`. 58 files and 5,700 rows, equal to
   `raw_charts` and `stg_charts` on BigQuery.
-- **Silver (`04a_silver_prices`)** has one row per (appid, collected_at). It is kept
+- **Silver (`04a_silver_prices`)**  
+  Has one row per (appid, collected_at). It is kept
   up to date with a `MERGE`. A watermark on bronze arrival time checks only the new rows, making it incremental. The match on the key means a duplicate observation will not be inserted twice. Unlike the 2-day lookback on BigQuery,
   a record that arrives late is picked up whatever its `collected_at` is. `NOT NULL` and `CHECK` constraints
   reject bad rows on write. Uniqueness and the bronze-to-silver count are checked after the merge.
   The late and duplicate cases are tested in `04b_silver_prices_tests`.
-- **Reconciliation**: `databricks/01_bronze_silver_one_day.py` writes silver once in SQL and once in
+- **Reconciliation**:  
+  `databricks/01_bronze_silver_one_day.py` writes silver once in SQL and once in
   PySpark and proves they are identical. The `price_status` counts for that day match `stg_prices`
   on BigQuery (fetch_failed 2, free 42, priced 723, unpriced 13, unreleased 4).
+- **Gold (`05_gold_price_history`)** `steam.gold.fct_price_history`  
+   Rebuilt from silver as one row per price version of an app. `LAG` finds the rows where `current_price` `discount_percent` or `price_status` changed, compared with `IS DISTINCT FROM` so a price going to NULL is not missed. `LEAD` over those rows gives `valid_to`. Failed fetches are dropped first because a failed fetch is not a version.  
+   Checks: unique `(appid, valid_from)`, no empty ranges, one current version per app,
+  always-free apps have one version. That check found 518790, theHunter: Call of the Wild.
+  Steam flags it `is_free` because it is free for theHunter Classic owners,but it has a regular price
+  for everyone else.  
+   Each rebuild of gold is a Delta version (`DESCRIBE HISTORY`).  
+   Comparing two versions with `VERSION AS OF` shows what a day changed. After 3 new days, 84 rows and42 apps changed, each with its old version closed and a new one opened.
 
 ### BigQuery vs Databricks
 
-| Step              | BigQuery (`stg_prices`)                                            | Databricks                                                                        |
-| ----------------- | ------------------------------------------------------------------ | --------------------------------------------------------------------------------- |
-| Read a JSON field | `json_value(response_json, '$.data.name')`                         | `response_json:data.name` in SQL, `get_json_object` in PySpark, the same JSONPath |
-| Prices            | `/ 100.0` gives `FLOAT64`                                          | `DECIMAL(10,2)`, so money is exact                                                |
-| Source file       | `source_file` written by `s3_to_bq.py`                             | `_metadata.file_path`, a hidden column of every file read                         |
-| Incremental load  | `s3_to_bq.py` compares the S3 file list with the files in BigQuery | Auto Loader records processed files in a checkpoint                               |
-| Incremental model | `insert_overwrite` with a 2-day lookback on `collected_at`         | `MERGE` on the key, watermark on arrival time, so late records are picked up      |
-| Arrays            | `UNNEST(json_query_array(...))`                                    | `from_json` + `explode`                                                           |
-| Data quality      | dbt tests after the build                                          | `NOT NULL` / `CHECK` constraints on write, plus checks after the merge            |
+| Step              | BigQuery (`stg_prices`)                                            | Databricks                                                                              |
+| ----------------- | ------------------------------------------------------------------ | --------------------------------------------------------------------------------------- |
+| Read a JSON field | `json_value(response_json, '$.data.name')`                         | `response_json:data.name` in SQL, `get_json_object` in PySpark, the same JSONPath       |
+| Prices            | `/ 100.0` gives `FLOAT64`                                          | `DECIMAL(10,2)`, so money is exact                                                      |
+| Source file       | `source_file` written by `s3_to_bq.py`                             | `_metadata.file_path`, a hidden column of every file read                               |
+| Incremental load  | `s3_to_bq.py` compares the S3 file list with the files in BigQuery | Auto Loader records processed files in a checkpoint                                     |
+| Incremental model | `insert_overwrite` with a 2-day lookback on `collected_at`         | `MERGE` on the key, watermark on arrival time, so late records are picked up            |
+| Arrays            | `UNNEST(json_query_array(...))`                                    | `from_json` + `explode`                                                                 |
+| Data quality      | dbt tests after the build                                          | `NOT NULL` / `CHECK` constraints on write, plus checks after the merge                  |
+| SCD2 history      | dbt model, tests `not_null`, `unique`, `not_negative`              | Same LAG/LEAD SQL, plus range, current-version and always-free checks that fail the run |
 
 ## Known limitations and design choices
 
