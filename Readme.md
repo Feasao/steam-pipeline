@@ -450,17 +450,17 @@ and the runs will be triggered by the existing Airflow DAG.
   PySpark and proves they are identical. The `price_status` counts for that day match `stg_prices`
   on BigQuery (fetch_failed 2, free 42, priced 723, unpriced 13, unreleased 4).
 - **Gold (`05_gold_price_history`)** `steam.gold.fct_price_history`  
-   Rebuilt from silver as one row per price version of an app. `LAG` finds the rows where `current_price` `discount_percent` or `price_status` changed, compared with `IS DISTINCT FROM` so a price going to NULL is not missed. `LEAD` over those rows gives `valid_to`. Failed fetches are dropped first because a failed fetch is not a version.  
+   Rebuilt from silver as one row per price version of an app. `LAG` finds the rows where `current_price`, `discount_percent` or `price_status` changed, compared with `IS DISTINCT FROM` so a price going to NULL is not missed. `LEAD` over those rows gives `valid_to`. Failed fetches are dropped first because a failed fetch is not a version.  
    Checks: unique `(appid, valid_from)`, no empty ranges, one current version per app,
   always-free apps have one version. That check found 518790, theHunter: Call of the Wild.
-  Steam flags it `is_free` because it is free for theHunter Classic owners,but it has a regular price
+  Steam flags it `is_free` because it is free for theHunter Classic owners, but it has a regular price
   for everyone else.  
    Each rebuild of gold is a Delta version (`DESCRIBE HISTORY`).  
-   Comparing two versions with `VERSION AS OF` shows what a day changed. After 3 new days, 84 rows and42 apps changed, each with its old version closed and a new one opened.
+   Comparing two versions with `VERSION AS OF` shows what a day changed. After 3 new days, 84 rows and 42 apps changed, each with its old version closed and a new one opened.
 
 ### BigQuery vs Databricks
 
-| Step              | BigQuery (`stg_prices`)                                            | Databricks                                                                              |
+| Step              | BigQuery                                          | Databricks                                                                              |
 | ----------------- | ------------------------------------------------------------------ | --------------------------------------------------------------------------------------- |
 | Read a JSON field | `json_value(response_json, '$.data.name')`                         | `response_json:data.name` in SQL, `get_json_object` in PySpark, the same JSONPath       |
 | Prices            | `/ 100.0` gives `FLOAT64`                                          | `DECIMAL(10,2)`, so money is exact                                                      |
