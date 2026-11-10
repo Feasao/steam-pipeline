@@ -44,7 +44,14 @@ main() {
 
     if [ "$rebuild" = yes ]; then
         cd orchestration
-        astro dev restart --no-browser
+        # On failure it goes back to the previous commit for the mounted DAGs then match the running image
+        # again. The next tick sees the new commits and retries the restart.
+        if ! astro dev restart --docker --no-proxy --wait 5m; then
+            cd "$REPO"
+            git reset --hard --quiet "$current"
+            echo "restart failed, rolled back to ${current:0:7}; retrying on the next tick" >&2
+            exit 1
+        fi
         echo "Airflow restarted with the new image"
     fi
 }
