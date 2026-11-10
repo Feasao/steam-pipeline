@@ -28,8 +28,10 @@ def test_steam_daily_contract(dag_bag):
     assert dag.schedule == "0 12 * * *"
     assert dag.catchup is False
     assert dag.max_active_runs == 1
-
-    order = ["collection", "upload_raw", "s3_to_bq", "dbt_build"]
-    assert set(dag.task_ids) == set(order)
-    for upstream, downstream in zip(order, order[1:]):
+    bq_path = ["collection", "upload_raw", "s3_to_bq", "dbt_build"]
+    assert set(dag.task_ids) == set(bq_path) | {"databricks_run"}
+    for upstream, downstream in zip(bq_path, bq_path[1:]):
         assert downstream in dag.get_task(upstream).downstream_task_ids, f"{upstream} must run before {downstream}"
+
+    assert dag.get_task("databricks_run").upstream_task_ids == {"upload_raw"}
+    assert dag.get_task("s3_to_bq").upstream_task_ids == {"upload_raw"}

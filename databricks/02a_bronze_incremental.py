@@ -2,7 +2,7 @@
 # MAGIC %md
 # MAGIC ## All history into bronze, incremental with Auto Loader
 # MAGIC One row per (appid, collected_at), one line of a prices_*.jsonl file  
-# MAGIC Outputs: steam.bronze.raw_prices with all days, loaded incrementally, steam.bronze.mmg_reviews one-off
+# MAGIC Outputs: steam.bronze.raw_prices with all days, loaded incrementally
 
 # COMMAND ----------
 
@@ -77,19 +77,6 @@ display(dbutils.fs.ls(CHECKPOINT))
 
 # COMMAND ----------
 
-reviews = spark.read.parquet("/Volumes/steam/bronze/s3_raw/steam_history/reviews/")
-reviews.printSchema()   
-
-# COMMAND ----------
-
-(reviews
- .withColumn("source_file", F.col("_metadata.file_path"))
- .withColumn("_ingested_at", F.current_timestamp())
- .write.mode("overwrite")
- .saveAsTable("steam.bronze.mmg_reviews"))
-
-# COMMAND ----------
-
 # MAGIC %md
 # MAGIC ### Results
 # MAGIC **Load choice**: Instead of using copy into I decided to use AutoLoader because it is a Structured Streaming source which is much more scalable for millions of files and it can be used both for batches and continuous streaming, so it is more flexible. The only downside is that the checkpoint and the table must be reset together to avoid duplicates since it is write append.
@@ -104,4 +91,3 @@ reviews.printSchema()
 # MAGIC **Table maintenance:** predictive optimization ran an optimize on the table (history
 # MAGIC version 3), compacting the small files written by the streaming batches.
 # MAGIC
-# MAGIC **Reviews:** recreated steam.bronze.mmg_reviews which has 1,048,148

@@ -1,7 +1,8 @@
-"""Daily Steam price pipeline run bat but for airflow
-"""
+"""Daily Steam pipeline: collect, upload raw files to S3, then load BigQuery (dbt) and run the
+Databricks job in parallel"""
 from datetime import datetime, timedelta
 
+from airflow.providers.databricks.operators.databricks import DatabricksRunNowOperator
 from airflow.providers.standard.operators.bash import BashOperator
 from airflow.sdk import dag
 
@@ -12,7 +13,7 @@ VENV = "/usr/local/airflow/pipeline_venv/bin"
 @dag(
     schedule="0 12 * * *",
     start_date=datetime(2026, 10, 1),
-    catchup=False, # We can only fetch the days titles and info no catchup
+    catchup=False,  # Steam only returns today's data, so past runs cannot be filled in
     max_active_runs=1,
     is_paused_upon_creation=True,
     default_args={
@@ -46,8 +47,15 @@ def steam_daily():
         env={"DBT_TARGET_PATH": "target_airflow", "DBT_LOG_PATH": "logs_airflow"},
         append_env=True,
     )
+    databricks_run = DatabricksRunNowOperator(
+        task_id="databricks_run",
+        job_name="steam-databricks-daily",
+        retries=0, #Retries are handled by the databricks job
+        execution_timeout=timedelta(minutes=125),  # Databricks job has 2 hour timeout
+    )
 
-    collection >> upload_raw >> s3_to_bq >> dbt_build
+    collection >> upload_raw >> [s3_to_bq, databricks_run]
+    s3_to_bq >> dbt_build
 
 
 steam_daily()

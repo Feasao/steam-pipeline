@@ -7,3 +7,4 @@ services:
     environment:
       GOOGLE_APPLICATION_CREDENTIALS: /usr/local/airflow/secrets/gcp-airflow-pipeline.json
       GCP_PROJECT: ${GCP_PROJECT}
+      AIRFLOW_CONN_DATABRICKS_DEFAULT: ${AIRFLOW_CONN_DATABRICKS_DEFAULT:?set AIRFLOW_CONN_DATABRICKS_DEFAULT in the env file}
