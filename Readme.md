@@ -26,6 +26,7 @@ flowchart LR
         C --> D[upload_raw.py]
         F[s3_to_bq.py]
         H[dbt build]
+        J[databricks_run]
     end
     A --> B
     D --> E
@@ -33,6 +34,9 @@ flowchart LR
     F --> G
     G --> H
     H --> I
+    D --> J
+    J -->|run now| K[[Databricks job<br/>steam-databricks-daily]]
+    E -->|read-only| K
     M[MMG CSVs] --> N[convert_mmg.py<br/>DuckDB, Parquet]
     N --> O[upload_mmg.py]
     O --> P[(S3<br/>raw/steam_history)]
@@ -274,17 +278,32 @@ incremental it re-reads from the start of the newest month.
 
 ## Orchestration
 
-The four steps run as the Airflow DAG `steam_daily` (`orchestration/dags/steam_daily.py`) on an
+The steps run as the Airflow DAG `steam_daily` (`orchestration/dags/steam_daily.py`) on an
 Oracle Cloud Linux VM. Airflow 3.3 runs from an Astro Runtime image with
 the Astro CLI, replacing a Windows Task Scheduler job.
 
 ```
-collection >> upload_raw >> s3_to_bq >> dbt_build
+collection >> upload_raw >> [s3_to_bq, databricks_run]
+s3_to_bq >> dbt_build
 ```
 
-A failed task stops everything after it upstream_failed, the same as `run.bat`.
-Retries are safe because `upload_raw.py` and `s3_to_bq.py` are idempotent and a rerun
+Both platforms start from the files `upload_raw` put in S3, and neither waits for the other.
+A failed `collection` or `upload_raw` stops both branches.
+Retries are ok because `upload_raw.py` and `s3_to_bq.py` are idempotent and a rerun
 of `collection.py` only adds another observation for the day, which the models already handle.
+
+### Databricks from Airflow
+
+`databricks_run` is a `DatabricksRunNowOperator` that starts the Databricks job `steam-databricks-daily`
+and waits for it to finish.
+
+- Airflow is the only scheduler, the databricks job has no trigger of its own. It only runs if the day's
+  files are in S3 and a failed upload stops it.
+- The job is found by name to prevent a redeploy that recreates the job breaking the DAG.
+- Retries are handled in the databricks side with one per task. The Airflow task has `retries=0`. The operator retries its own API calls.
+- The workspace host and token come from the Airflow connection `databricks_default`, set as the
+  environment variable `AIRFLOW_CONN_DATABRICKS_DEFAULT` from the VM's env file. No secret is in the repo
+  or in Airflow's database.
 
 ### The image and the repo
 
@@ -305,13 +324,14 @@ The DAG writes dbt artifacts to `target_airflow/` and `logs_airflow/`,because wh
 
 ### Credentials
 
-| Cloud      | How                                                                           | Scope                                                                                                         |
-| ---------- | ----------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------- |
-| BigQuery   | Service account `airflow-pipeline` with a key file                            | `bigquery.jobUser` on the project, `dataEditor` on `steam_raw` and `steam_staging`, `dataViewer` on `mmg_raw` |
-| S3         | The repo's `.env`, read by `load_dotenv()`                                    | The IAM user's bucket policy (`infra/s3_user_pol.json`)                                                       |
-| Databricks | Unity Catalog storage credential that assumes an IAM role with an external ID | `s3:GetObject` on `raw/*`, read-only in Unity Catalog (`infra/databricks_role_policy.json`)                   |
+| Cloud                 | How                                                                           | Scope                                                                                                         |
+| --------------------- | ----------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------- |
+| BigQuery              | Service account `airflow-pipeline` with a key file                            | `bigquery.jobUser` on the project, `dataEditor` on `steam_raw` and `steam_staging`, `dataViewer` on `mmg_raw` |
+| S3                    | The repo's `.env`, read by `load_dotenv()`                                    | The IAM user's bucket policy (`infra/s3_user_pol.json`)                                                       |
+| Databricks            | Unity Catalog storage credential that assumes an IAM role with an external ID | `s3:GetObject` on `raw/*`, read-only in Unity Catalog (`infra/databricks_role_policy.json`)                   |
+| Airflow to Databricks | Access token in `databricks_default`                                          | Access token with user's permissions to be able to trigger the job                                            |
 
-`steam/profiles.yml` uses `method: oauth`, so dbt takes the same
+`steam/profiles.yml` uses `method: oauth`. dbt takes the same
 Application Default Credentials as the scripts. The project id comes from the `GCP_PROJECT` environment variable.
 
 Keyless options like Workload Identity Federation are not available to a
@@ -359,7 +379,10 @@ every 5 minutes.
 - It git fetches and compares with origin/main. If nothing is new, it exits.
 - If a `steam_daily` run is queued or running, it waits for the next tick, so a run never mixes two versions of the code and a restart never kills a running task.
 - `git merge --ff-only` refuses if the clone on the VM has diverged from `main`.
-- `astro dev restart` runs only when files baked into the image change.
+- `astro dev restart --docker --no-proxy --wait 5m` runs only when files baked into the image change.
+  If the restart fails the script resets the clone to the previous commit so the mounted DAGs keep
+  matching the running image. It retries on the next tick again. This was added after an Astro CLI update removed
+  a flag that was used. The merge went through, the restart failed and the new DAG code was left on the old image.
 
 GitHub has no credentials for the VM and vice versa.
 
@@ -371,7 +394,7 @@ sudo systemctl daemon-reload && sudo systemctl enable --now steam-deploy.timer
 journalctl -u steam-deploy.service -n 20 --no-pager
 ```
 
-The service reads `GCP_PROJECT` and `SECRETS_DIR` from `~/.config/steam-pipeline.env`.
+The service reads `GCP_PROJECT` and `SECRETS_DIR` and `AIRFLOW_CONN_DATABRICKS_DEFAULT` from `~/.config/steam-pipeline.env`.
 
 ## Tests
 
@@ -423,18 +446,18 @@ requires the role to be able to assume itself. The credential and the
 location are read-only, so Databricks cannot write to the raw zone even if the IAM
 policy allowed it. The raw files are read through the external volume `steam.bronze.s3_raw`.
 
-File events are not set up on purpose. Incremental loading uses Auto Loader's directory listing,
-and the runs will be triggered by the existing Airflow DAG.
+File events are not set up on purpose. Incremental loading uses Auto Loader's directory listing
+and the runs are triggered by the Airflow DAG, see [Orchestration](#orchestration).
 
 ### From bronze to silver
 
-- **Bronze (`02_bronze_incremental`)** `steam.bronze.raw_prices`:  
+- **Bronze (`02a_bronze_incremental`)** `steam.bronze.raw_prices`:  
   Auto Loader with an explicit schema so `response_json` stays a string (failed fetches are kept as data),
   `_metadata.file_path` as `source_file`, `obs_date` from the `dt=` folder and an `_ingested_at` timestamp. It runs with
   `availableNow` and a checkpoint. Each run loads only files it has not seen. The first load
   (55 files, 52 days, 41,423 rows) equals `steam_raw.raw_prices` on BigQuery. A rerun loads nothing,
   and the next run picked up only the two new days.  
-  `steam.bronze.mmg_reviews` (1,048,148 rows) is a one-off batch load, since the historical dataset does not change.
+  `steam.bronze.mmg_reviews` (1,048,148 rows) is a one-off batch load in `02b_mmg_reviews`, since the historical dataset does not change.
 - **Charts (`03_charts`)**:  
   One row per file in `bronze.raw_charts`. Using `from_json` and `explode` to unnest and drop the failed fetches
   turns the 100 ranks of each file into rows in `silver.charts`. 58 files and 5,700 rows, equal to
@@ -458,9 +481,23 @@ and the runs will be triggered by the existing Airflow DAG.
    Each rebuild of gold is a Delta version (`DESCRIBE HISTORY`).  
    Comparing two versions with `VERSION AS OF` shows what a day changed. After 3 new days, 84 rows and 42 apps changed, each with its old version closed and a new one opened.
 
+### The daily job
+
+`steam-databricks-daily` runs on serverless compute one run at a time, with one retry per task and a failure email.
+
+| Task                 | Notebook                 | After           |
+| -------------------- | ------------------------ | --------------- |
+| `bronze_prices`      | `02a_bronze_incremental` |                 |
+| `charts`             | `03_charts`              |                 |
+| `silver_prices`      | `04a_silver_prices`      | `bronze_prices` |
+| `gold_price_history` | `05_gold_price_history`  | `silver_prices` |
+
+Every notebook is idempotent. It has run from Airflow every day with the rest of the pipeline
+and a daily run takes about 2 minutes.
+
 ### BigQuery vs Databricks
 
-| Step              | BigQuery                                          | Databricks                                                                              |
+| Step              | BigQuery                                                           | Databricks                                                                              |
 | ----------------- | ------------------------------------------------------------------ | --------------------------------------------------------------------------------------- |
 | Read a JSON field | `json_value(response_json, '$.data.name')`                         | `response_json:data.name` in SQL, `get_json_object` in PySpark, the same JSONPath       |
 | Prices            | `/ 100.0` gives `FLOAT64`                                          | `DECIMAL(10,2)`, so money is exact                                                      |
@@ -470,6 +507,7 @@ and the runs will be triggered by the existing Airflow DAG.
 | Arrays            | `UNNEST(json_query_array(...))`                                    | `from_json` + `explode`                                                                 |
 | Data quality      | dbt tests after the build                                          | `NOT NULL` / `CHECK` constraints on write, plus checks after the merge                  |
 | SCD2 history      | dbt model, tests `not_null`, `unique`, `not_negative`              | Same LAG/LEAD SQL, plus range, current-version and always-free checks that fail the run |
+| Orchestration     | Airflow runs `s3_to_bq` and `dbt build` as tasks                   | Airflow starts one Databricks job with 4 tasks and waits for it                         |
 
 ## Known limitations and design choices
 
@@ -500,8 +538,7 @@ and the runs will be triggered by the existing Airflow DAG.
   price changes across the October sale were switches. 23 of 1,283 price versions (1.8%) in 11 apps,
   are switches in the data as well.
 - **No automatic rollback**  
-  A merged change that breaks at run time still deploys so there would need to be a revert pull request.
-  CI catches import errors, broken DAG settings and failing dbt builds before the merge.
+  The deploy script rolls back only when the Airflow restart fails. A merged change that breaks at run time still deploys, so it reverts the pull request on fail.
 
 ## Results
 
@@ -556,12 +593,13 @@ copy .env.example .env
 cd steam; dbt deps
 ```
 
-Two environment variables are needed wherever dbt or Airflow run:
+Three environment variables are needed wherever dbt or Airflow run:
 
-| Variable      | Used by                                    | Value                                                              |
-| ------------- | ------------------------------------------ | ------------------------------------------------------------------ |
-| `GCP_PROJECT` | `steam/profiles.yml`, the compose override | The GCP project id                                                 |
-| `SECRETS_DIR` | The compose override                       | Folder holding the service account key `gcp-airflow-pipeline.json` |
+| Variable                          | Used by                                    | Value                                                                    |
+| --------------------------------- | ------------------------------------------ | ------------------------------------------------------------------------ |
+| `GCP_PROJECT`                     | `steam/profiles.yml`, the compose override | The GCP project id                                                       |
+| `SECRETS_DIR`                     | The compose override                       | Folder holding the service account key `gcp-airflow-pipeline.json`       |
+| `AIRFLOW_CONN_DATABRICKS_DEFAULT` | The compose override                       | Airflow connection to the Databricks workspace, JSON with host and token |
 
 ## Running
 
