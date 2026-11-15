@@ -316,7 +316,7 @@ The repo is bind-mounted into the scheduler container and every task runs from t
 
 ### dbt in Airflow
 
-dbt runs with `dbt deps && dbt build`. The build takes approx. 30 seconds and
+dbt runs with `dbt deps && dbt build --exclude-resource-type unit_test`. Since the unit tests check logic and not data they only need to be checked in CI on every pull request. The build takes approx. 30 seconds and
 `dbt build` already skips everything downstream of a failed test while finishing the unrelated
 models, `dbt retry` reruns only what failed, so something like [Cosmos](https://github.com/astronomer/astronomer-cosmos) for example would not be that useful.
 
@@ -400,15 +400,17 @@ The service reads `GCP_PROJECT` and `SECRETS_DIR` and `AIRFLOW_CONN_DATABRICKS_D
 
 Besides `not_null` / `unique`:
 
-| Test                                   | Guards                                       |
-| -------------------------------------- | -------------------------------------------- |
-| `cast_preserves_values` (generic)      | casts that turn values into NULL             |
-| `not_negative` (generic)               | negative prices check                        |
-| `accepted_values` `USD` on `currency`  | Steam ignoring `cc=us`                       |
-| `accepted_range` 1–100 on `chart_rank` | out-of-range values                          |
-| `unique_combination_of_columns`        | check grain logic, one row per x             |
-| `100_a_day`                            | 100 chart rows a day                         |
-| `rollup_check`                         | two files reporting the same day differently |
+| Test                                   | Guards                                        |
+| -------------------------------------- | --------------------------------------------- |
+| `cast_preserves_values` (generic)      | casts that turn values into NULL              |
+| `not_negative` (generic)               | negative prices check                         |
+| `accepted_values` `USD` on `currency`  | Steam ignoring `cc=us`                        |
+| `accepted_range` 1–100 on `chart_rank` | out-of-range values                           |
+| `unique_combination_of_columns`        | check grain logic, one row per x              |
+| `100_a_day`                            | 100 chart rows a day                          |
+| `rollup_check`                         | two files reporting the same day differently  |
+| `stg_prices_status_and_prices` (unit)  | CASE order and cents conversion               |
+| `fct_price_history_versions` (unit)    | gaps, null price changes, list-price switches |
 
 ## Databricks Edition (in progress)
 

@@ -42,7 +42,7 @@ def steam_daily():
     )
     dbt_build = BashOperator(
         task_id="dbt_build",
-        bash_command=f"{VENV}/dbt deps && {VENV}/dbt build",
+        bash_command=f"{VENV}/dbt deps && {VENV}/dbt build --exclude-resource-type unit_test",
         cwd=f"{REPO}/steam",
         env={"DBT_TARGET_PATH": "target_airflow", "DBT_LOG_PATH": "logs_airflow"},
         append_env=True,
