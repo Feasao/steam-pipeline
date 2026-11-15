@@ -58,3 +58,71 @@ models:
       - dbt_utils.unique_combination_of_columns:
           arguments:
             combination_of_columns: [appid, collected_at]
+
+unit_tests:
+  - name: stg_prices_status_and_prices
+    description: >
+      price_status follows the case order (fetch_failed, unreleased, free, priced, unpriced),
+      prices are converted from cents and a missing discount becomes 0.
+    model: stg_prices
+    overrides:
+      macros:
+        is_incremental: false
+    given:
+      - input: source('steam_raw', 'raw_prices')
+        format: dict
+        rows:
+          # 1. A failed fetch
+          - {appid: 1, collected_at: '2026-11-01 12:00:00', response_json: '{"success": false}'}
+          # 2. coming_soon and a price_overview. Then the tag is unreleased
+          - {appid: 2, collected_at: '2026-11-01 12:00:00', response_json: '{"success": true, "data": {"release_date": {"coming_soon": true}, "price_overview": {"initial": 1999, "final": 1999, "discount_percent": 0}}}'}
+          # 3. is_free and a price_overview (as in 518790). In this case the tag is "free"
+          - {appid: 3, collected_at: '2026-11-01 12:00:00', response_json: '{"success": true, "data": {"is_free": true, "price_overview": {"initial": 1999, "final": 1999, "discount_percent": 0}}}'}
+          # 4. normal price
+          - {appid: 4, collected_at: '2026-11-01 12:00:00', response_json: '{"success": true, "data": {"price_overview": {"initial": 1999, "final": 1999, "discount_percent": 0}}}'}
+          # 5. sale
+          - {appid: 5, collected_at: '2026-11-01 12:00:00', response_json: '{"success": true, "data": {"price_overview": {"initial": 1999, "final": 499, "discount_percent": 75}}}'}
+          # 6. success but no price_overview and no is_free
+          - {appid: 6, collected_at: '2026-11-01 12:00:00', response_json: '{"success": true, "data": {}}'}
+    expect:
+      format: dict
+      rows:
+        - {appid: 1, price_status: 'fetch_failed', list_price: null,  current_price: null,  discount_percent: 0}
+        - {appid: 2, price_status: 'unreleased', list_price: 19.99, current_price: 19.99, discount_percent: 0}
+        - {appid: 3, price_status: 'free',       list_price: 19.99, current_price: 19.99, discount_percent: 0}
+        - {appid: 4, price_status: 'priced',     list_price: 19.99, current_price: 19.99, discount_percent: 0}
+        - {appid: 5, price_status: 'priced',     list_price: 19.99, current_price: 4.99,  discount_percent: 75}
+        - {appid: 6, price_status: 'unpriced',   list_price: null,  current_price: null,  discount_percent: 0}
+
+  - name: fct_price_history_versions
+    description: >
+      A new version starts when current_price, discount_percent or price_status changes.
+      Failed fetches are dropped, a price going to NULL is a change, only a list_price change is not.
+    model: fct_price_history
+    given:
+      - input: ref('stg_prices')
+        format: dict
+        rows:
+          # 1: A title with a fail, a sale and a sale end
+          - {appid: 1, collected_at: '2026-11-01 12:00:00', price_status: 'priced',       list_price: 19.99, current_price: 19.99, discount_percent: 0}
+          - {appid: 1, collected_at: '2026-11-02 12:00:00', price_status: 'priced',       list_price: 19.99, current_price: 19.99, discount_percent: 0}
+          - {appid: 1, collected_at: '2026-11-03 12:00:00', price_status: 'fetch_failed', list_price: null,  current_price: null,  discount_percent: 0}
+          - {appid: 1, collected_at: '2026-11-04 12:00:00', price_status: 'priced',       list_price: 19.99, current_price: 19.99, discount_percent: 0}
+          - {appid: 1, collected_at: '2026-11-05 12:00:00', price_status: 'priced',       list_price: 19.99, current_price: 4.99,  discount_percent: 75}
+          - {appid: 1, collected_at: '2026-11-06 12:00:00', price_status: 'priced',       list_price: 19.99, current_price: 19.99, discount_percent: 0}
+          # 2: A preorder whose price disappears with the same status
+          - {appid: 2, collected_at: '2026-11-01 12:00:00', price_status: 'unreleased',   list_price: 29.99, current_price: 29.99, discount_percent: 0}
+          - {appid: 2, collected_at: '2026-11-02 12:00:00', price_status: 'unreleased',   list_price: null,  current_price: null,  discount_percent: 0}
+          - {appid: 2, collected_at: '2026-11-03 12:00:00', price_status: 'unreleased',   list_price: null,  current_price: null,  discount_percent: 0}
+          # 3: A list_price switch with same current price and discount
+          - {appid: 3, collected_at: '2026-11-01 12:00:00', price_status: 'priced',       list_price: 19.99, current_price: 9.99,  discount_percent: 50}
+          - {appid: 3, collected_at: '2026-11-02 12:00:00', price_status: 'priced',       list_price: 24.99, current_price: 9.99,  discount_percent: 50}
+    expect:
+      format: dict
+      rows:
+        - {appid: 1, valid_from: '2026-11-01 12:00:00', valid_to: '2026-11-05 12:00:00', current_price: 19.99}
+        - {appid: 1, valid_from: '2026-11-05 12:00:00', valid_to: '2026-11-06 12:00:00', current_price: 4.99}
+        - {appid: 1, valid_from: '2026-11-06 12:00:00', valid_to: null,                  current_price: 19.99}
+        - {appid: 2, valid_from: '2026-11-01 12:00:00', valid_to: '2026-11-02 12:00:00', current_price: 29.99}
+        - {appid: 2, valid_from: '2026-11-02 12:00:00', valid_to: null,                  current_price: null}
+        - {appid: 3, valid_from: '2026-11-01 12:00:00', valid_to: null,                  current_price: 9.99}
