@@ -1,0 +1,62 @@
+# Bundle for the Databricks side of steam-pipeline. It gets run daily by Airflow.
+bundle:
+  name: steam_pipeline
+
+variables:
+  alert_email:
+    description: Email address for failure and slow runs
+
+resources:
+  jobs:
+    steam_databricks_daily:
+      name: steam-databricks-daily
+      max_concurrent_runs: 1
+      timeout_seconds: 7200
+      queue:
+        enabled: true
+      performance_target: PERFORMANCE_OPTIMIZED
+      health:
+        rules:
+          - metric: RUN_DURATION_SECONDS
+            op: GREATER_THAN
+            value: 1200
+      email_notifications:
+        on_failure:
+          - ${var.alert_email}
+        on_duration_warning_threshold_exceeded:
+          - ${var.alert_email}
+      tasks:
+        - task_key: bronze_prices
+          notebook_task:
+            notebook_path: ./02a_bronze_incremental.py
+          max_retries: 1
+          min_retry_interval_millis: 300000
+        - task_key: charts
+          notebook_task:
+            notebook_path: ./03_charts.py
+          max_retries: 1
+          min_retry_interval_millis: 300000
+        - task_key: silver_prices
+          depends_on:
+            - task_key: bronze_prices
+          notebook_task:
+            notebook_path: ./04a_silver_prices.py
+          max_retries: 1
+          min_retry_interval_millis: 300000
+        - task_key: gold_price_history
+          depends_on:
+            - task_key: silver_prices
+          notebook_task:
+            notebook_path: ./05_gold_price_history.py
+          max_retries: 1
+          min_retry_interval_millis: 300000
+
+targets:
+  dev:
+    mode: development
+    default: true
+  prod:
+    mode: production
+    workspace:
+      # Explicit deploy location is required in prod
+      root_path: /Workspace/Users/${workspace.current_user.userName}/.bundle/${bundle.name}/${bundle.target}

@@ -65,3 +65,30 @@ jobs:
       - name: dbt build into steam_ci
         working-directory: steam
         run: dbt build --target ci
+
+  databricks:
+    name: Databricks bundle
+    if: github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    concurrency:
+      group: databricks-deploy
+      cancel-in-progress: false
+    env:
+      DATABRICKS_HOST: ${{ vars.DATABRICKS_HOST }}
+      DATABRICKS_TOKEN: ${{ secrets.DATABRICKS_TOKEN }}
+      BUNDLE_VAR_alert_email: ${{ secrets.ALERT_EMAIL }}
+    defaults:
+      run:
+        working-directory: databricks
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: databricks/setup-cli@v1.26.0
+
+      - name: Validate the bundle (prod)
+        run: databricks bundle validate -t prod
+
+      - name: Deploy to prod (for main only)
+        if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+        run: databricks bundle deploy -t prod
