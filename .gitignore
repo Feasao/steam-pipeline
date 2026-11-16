@@ -17,3 +17,6 @@ notes.md
 *target_airflow/
 *logs_airflow/
 steam/.user.yml
+
+#databricks
+.databricks/
