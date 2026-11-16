@@ -356,11 +356,12 @@ VM outside GCP so a key was needed. Note that Google enforces a secure-by-defaul
 | ------------------------------- | --------------------------------------------------------------------------------------------------------------- | ------------ |
 | DAG tests and requirements sync | Making sure the root and the image's reqs match and steam_daily keeps schedule, catchup, retries and task order | None         |
 | dbt build                       | It builds on the real raw data and writes to a dedicated ci dataset                                             | WIF          |
+| Databricks bundle               | bundle validate on every pull request and bundle deploy on merges to main                                       | Token        |
 
 A ruleset for no direct or force pushes is enforced on main and a pull request
 merges only when both the above checks pass. Pull requests are squash-merged.
 
-### Keyless BigQuery access
+### Keyless access
 
 The dbt job uses Workload Identity Federation, GitHub does not store a key.
 
@@ -370,6 +371,10 @@ The dbt job uses Workload Identity Federation, GitHub does not store a key.
 
 CI reads the production raw data but can only write to the `steam_ci` dataset whose tables expire after 7 days.
 The `ci` target caps every query at 5 GB billed. The dbt job is skipped for pull requests from forks.
+
+Databricks supports workload identity federation for GitHub Actions, but the federation policy can only be created
+by an account admin in the account console. Account console is not available on Free Edition, so CI uses a personal access
+token stored as a repo secret.
 
 ### Continuous Delivery
 
@@ -497,6 +502,12 @@ and the runs are triggered by the Airflow DAG, see [Orchestration](#orchestratio
 Every notebook is idempotent. It has run from Airflow every day with the rest of the pipeline
 and a daily run takes about 2 minutes.
 
+### Bundle Deploy
+
+The job is in `databricks/databricks.yml` and deployed with the Databricks CLI.  
+`dev` is a separate `[dev <user>]` copy of the job for testing, `prod` is the real job. It has a 2-hour timeout and it emails when a run takes over 20 minutes. The normal time for a run is approx. 2 minutes as of November 2026.  
+The email is a bundle variable passed at deploy time and the host comes from the environment.
+
 ### BigQuery vs Databricks
 
 | Step              | BigQuery                                                           | Databricks                                                                              |
@@ -541,6 +552,8 @@ and a daily run takes about 2 minutes.
   are switches in the data as well.
 - **No automatic rollback**  
   The deploy script rolls back only when the Airflow restart fails. A merged change that breaks at run time still deploys, so it reverts the pull request on fail.
+- **The GitHub deploy does not wait for a job to finish**
+  A merge during the 2 minutes that a daily job runs could change notebook files in the middle of it.
 
 ## Results
 
