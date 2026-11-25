@@ -20,3 +20,11 @@ steam/.user.yml
 
 #databricks
 .databricks/
+
+#terraform
+.terraform/
+*.tfstate
+*.tfstate.*
+*.tfvars
+backend.hcl
+crash.log
