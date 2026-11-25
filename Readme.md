@@ -357,9 +357,10 @@ VM outside GCP so a key was needed. Note that Google enforces a secure-by-defaul
 | DAG tests and requirements sync | Making sure the root and the image's reqs match and steam_daily keeps schedule, catchup, retries and task order | None         |
 | dbt build                       | It builds on the real raw data and writes to a dedicated ci dataset                                             | WIF          |
 | Databricks bundle               | bundle validate on every pull request and bundle deploy on merges to main                                       | Token        |
+| Terraform fmt and validate      | HCL formatting, syntax, references and provider schemas in `infra/terraform/`                                   | None         |
 
 A ruleset for no direct or force pushes is enforced on main and a pull request
-merges only when both the above checks pass. Pull requests are squash-merged.
+merges only when all the above checks pass. Pull requests are squash-merged.
 
 ### Keyless access
 
@@ -400,6 +401,41 @@ journalctl -u steam-deploy.service -n 20 --no-pager
 ```
 
 The service reads `GCP_PROJECT` and `SECRETS_DIR` and `AIRFLOW_CONN_DATABRICKS_DEFAULT` from `~/.config/steam-pipeline.env`.
+
+## Infrastructure as code
+
+The AWS side of the pipeline was created by hand in October and later imported into Terraform
+in `infra/terraform/`.
+
+| AWS                                         | Terraform                                                                  |
+| ------------------------------------------- | -------------------------------------------------------------------------- |
+| Raw bucket                                  | `aws_s3_bucket.raw`                                                        |
+| Versioning on the raw bucket                | `aws_s3_bucket_versioning.raw`                                             |
+| Public access block on the raw bucket       | `aws_s3_bucket_public_access_block.raw`                                    |
+| Pipeline IAM user                           | `aws_iam_user.pipeline`                                                    |
+| The user's S3 managed policy and attachment | `aws_iam_policy.pipeline_s3`, `aws_iam_user_policy_attachment.pipeline_s3` |
+| Databricks role and its trust policy        | `aws_iam_role.databricks_raw_read`                                         |
+| The role's inline read policy               | `aws_iam_role_policy.databricks_raw_read`                                  |
+
+### The Terraform identity
+
+Terraform runs as a dedicated IAM user whose policy allows reading the configuration of the
+resources from an S3 state bucket and writing only its own state object. It has no write rights on the bucket or IAM. It also cannot read the raw files. Any future change needs a permission grant.
+
+The pipeline user's access key is not managed by Terraform, becuase it would need to be stored in the state.
+
+### Running terraform
+
+```powershell
+cd infra/terraform
+# backend.hcl:       bucket = "<state-bucket>"   region = "<region>"
+# terraform.tfvars:  raw_bucket_name, databricks_uc_master_role_arn, databricks_external_id
+terraform init -backend-config="backend.hcl"
+terraform plan        # expected output: No changes
+```
+
+CI runs `terraform fmt -check` and `terraform validate` on every pull request without credentials.
+Running `plan` in CI would need a GitHub OIDC role in AWS, the AWS counterpart of the WIF setup above. It is not built.
 
 ## Tests
 
