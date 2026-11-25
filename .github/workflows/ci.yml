@@ -92,3 +92,25 @@ jobs:
       - name: Deploy to prod (for main only)
         if: github.event_name == 'push' && github.ref == 'refs/heads/main'
         run: databricks bundle deploy -t prod
+
+  terraform:
+    name: Terraform fmt and validate
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    defaults:
+      run:
+        working-directory: infra/terraform
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: hashicorp/setup-terraform@v4
+        with:
+          terraform_version: "1.17.1"
+
+      - name: terraform fmt
+        run: terraform fmt -check -recursive
+
+      - name: terraform validate
+        run: |
+          terraform init -backend=false -input=false
+          terraform validate
