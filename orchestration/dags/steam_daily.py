@@ -27,9 +27,6 @@ def notify_failure(context):
         return
     ti = context["ti"]
     message = f"{ti.task_id} failed on {context['ds']} after {ti.try_number} attempt(s)"
-    error = str(context.get("exception") or "").strip()
-    if error:
-        message = f"{ti.task_id} failed on {context['ds']} after {ti.try_number} attempt(s)"
     request = urllib.request.Request(
         f"https://ntfy.sh/{topic}",
         data=message.encode(),

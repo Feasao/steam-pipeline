@@ -1,7 +1,7 @@
 steam:
   target: dev
   outputs:
-    dev:
+    prod:
       type: bigquery
       method: oauth
       project: "{{ env_var('GCP_PROJECT') }}"
