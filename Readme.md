@@ -316,11 +316,23 @@ The repo is bind-mounted into the scheduler container and every task runs from t
 
 ### dbt in Airflow
 
-dbt runs with `dbt deps && dbt build --exclude-resource-type unit_test`. Since the unit tests check logic and not data they only need to be checked in CI on every pull request. The build takes approx. 30 seconds and
+dbt runs with `dbt deps && dbt build --exclude-resource-type unit_test`. Since the unit tests check logic and not data they only need to be checked in CI on every pull request. The ci writes to steam-ci, local dev to steam-dev and prod to steam-prod with --target prod. The build takes approx. 30 seconds and
 `dbt build` already skips everything downstream of a failed test while finishing the unrelated
 models, `dbt retry` reruns only what failed, so something like [Cosmos](https://github.com/astronomer/astronomer-cosmos) for example would not be that useful.
 
 The DAG writes dbt artifacts to `target_airflow/` and `logs_airflow/`,because while developing locally across Linux and Windows they can corrupt each other's partial-parse cache if they share a `target/` folder.
+
+
+### Alerts
+
+Every task has an `on_failure_callback` that sends a push notification through [ntfy](https://ntfy.sh)
+after its last attempt fails. Retries are skipped to not spam notifications.
+
+The public ntfy server lets anyone who knows a topic name read it. The topic thus is a random name kept in
+the VM's env file and the message contains only a plain warning with no sensitive information.
+
+The callback cannot fire when there is no run at all, for example when the VM is down, the scheduler has
+stopped or the DAG fails to import.
 
 ### Credentials
 

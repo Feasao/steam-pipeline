@@ -6,9 +6,39 @@ from airflow.providers.databricks.operators.databricks import DatabricksRunNowOp
 from airflow.providers.standard.operators.bash import BashOperator
 from airflow.sdk import dag
 
+import logging
+import os
+import urllib.request
+
 REPO = "/usr/local/airflow/pipeline"
 VENV = "/usr/local/airflow/pipeline_venv/bin"
 
+
+log = logging.getLogger(__name__)
+
+
+def notify_failure(context):
+    """Push a phone notification after a task's last attempt fails.
+
+    NTFY_TOPIC is a random topic on public ntfy.sh
+    """
+    topic = os.environ.get("NTFY_TOPIC")
+    if not topic:
+        return
+    ti = context["ti"]
+    message = f"{ti.task_id} failed on {context['ds']} after {ti.try_number} attempt(s)"
+    error = str(context.get("exception") or "").strip()
+    if error:
+        message = f"{ti.task_id} failed on {context['ds']} after {ti.try_number} attempt(s)"
+    request = urllib.request.Request(
+        f"https://ntfy.sh/{topic}",
+        data=message.encode(),
+        headers={"Title": "steam_daily failed", "Priority": "high", "Tags": "warning"},
+    )
+    try:
+        urllib.request.urlopen(request, timeout=10)
+    except OSError as exc:
+        log.warning("ntfy notification failed: %s", exc)
 
 @dag(
     schedule="0 12 * * *",
@@ -19,6 +49,7 @@ VENV = "/usr/local/airflow/pipeline_venv/bin"
     default_args={
         "retries": 2,
         "retry_delay": timedelta(minutes=10),
+        "on_failure_callback": notify_failure,
     },
     tags=["steam", "elt"],
 )
@@ -42,7 +73,7 @@ def steam_daily():
     )
     dbt_build = BashOperator(
         task_id="dbt_build",
-        bash_command=f"{VENV}/dbt deps && {VENV}/dbt build --exclude-resource-type unit_test",
+            bash_command=f"{VENV}/dbt deps && {VENV}/dbt build --target prod --exclude-resource-type unit_test",
         cwd=f"{REPO}/steam",
         env={"DBT_TARGET_PATH": "target_airflow", "DBT_LOG_PATH": "logs_airflow"},
         append_env=True,
