@@ -22,3 +22,14 @@ steam:
       job_execution_timeout_seconds: 300
       job_retries: 1
       maximum_bytes_billed: 5000000000   # any query that would scan more than 5 GB is refused
+    dev:
+      type: bigquery
+      method: oauth
+      project: "{{ env_var('GCP_PROJECT') }}"
+      dataset: steam_dev          # changed to not override prod on local dev
+      location: EU
+      threads: 4
+      priority: interactive
+      job_execution_timeout_seconds: 300
+      job_retries: 1
+      maximum_bytes_billed: 5000000000

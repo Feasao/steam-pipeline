@@ -22,6 +22,10 @@ def test_every_dag_has_tags_and_retries(dag_bag):
         assert dag.tags, f"{dag_id} has no tags"
         assert dag.default_args.get("retries", 0) >= 2, f"{dag_id} needs retries >= 2"
 
+def test_steam_daily_failures_notify(dag_bag):
+    dag = dag_bag.dags["steam_daily"]
+    for task in dag.tasks:
+        assert task.on_failure_callback, f"{task.task_id} has no failure notification"
 
 def test_steam_daily_contract(dag_bag):
     dag = dag_bag.dags["steam_daily"]
@@ -35,3 +39,4 @@ def test_steam_daily_contract(dag_bag):
 
     assert dag.get_task("databricks_run").upstream_task_ids == {"upload_raw"}
     assert dag.get_task("s3_to_bq").upstream_task_ids == {"upload_raw"}
+    assert "--target prod" in dag.get_task("dbt_build").bash_command, "dbt_build must use --target prod"
